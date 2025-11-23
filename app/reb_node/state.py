@@ -15,16 +15,24 @@ from xray_api import exceptions as exc
 
 core = XRayCore(XRAY_EXECUTABLE_PATH, XRAY_ASSETS_PATH)
 
-# Search for a free API port
+api_port = 8080  # Default port
 try:
-    for api_port in range(randint(10000, 60000), 65536):
-        if not check_port(api_port):
+    for port in range(randint(10000, 60000), 65536):
+        if not check_port(port):
+            api_port = port
             break
-finally:
+except Exception:
+    api_port = 8080
+
+try:
     with GetDB() as db:
         raw_config = crud.get_xray_config(db)
     config = XRayConfig(raw_config, api_port=api_port)
-    del api_port
+except Exception as e:
+    import logging
+    logger = logging.getLogger("uvicorn.error")
+    logger.warning(f"Failed to load Xray config from database: {e}")
+    config = XRayConfig({}, api_port=api_port)
 
 api = XRayAPI(config.api_host, config.api_port)
 
