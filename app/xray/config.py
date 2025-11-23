@@ -1,9 +1,5 @@
 import json
-import os
 from pathlib import PosixPath
-import logging
-
-logger = logging.getLogger("uvicorn.error")
 
 
 class XRayConfig(dict):
@@ -17,41 +13,12 @@ class XRayConfig(dict):
                 config = json.loads(config)
             except json.JSONDecodeError:
                 # considering string as file path
-                if os.path.exists(config):
-                    try:
-                        with open(config, 'r') as file:
-                            file_content = file.read()
-                            try:
-                                config = json.loads(file_content)
-                            except json.JSONDecodeError:
-                                # If file exists but contains invalid JSON, keep as empty dict
-                                logger.warning("Xray config file %s contains invalid JSON, using empty fallback config", config)
-                                config = {}
-                    except Exception:
-                        logger.warning("Failed to read Xray config file %s, using empty fallback config", config)
-                        config = {}
-                else:
-                    # Not a JSON string or a path to file -> fallback to empty config
-                    logger.warning("Xray config file %s not found, using empty fallback config", config)
-                    config = {}
+                with open(config, 'r') as file:
+                    config = json.loads(file.read())
 
         if isinstance(config, PosixPath):
-            if config.exists():
-                try:
-                    with open(config, 'r') as file:
-                        file_content = file.read()
-                        try:
-                            config = json.loads(file_content)
-                        except json.JSONDecodeError:
-                            logger.warning("Xray config file %s contains invalid JSON, using empty fallback config", config)
-                            config = {}
-                            config = {}
-                except Exception:
-                    logger.warning("Failed to read Xray config file %s, using empty fallback config", config)
-                    config = {}
-            else:
-                logger.warning("Xray config %s not found, using empty fallback config", config)
-                config = {}
+            with open(config, 'r') as file:
+                config = json.loads(file.read())
 
         self.api_host = api_host
         self.api_port = api_port
@@ -115,14 +82,14 @@ class XRayConfig(dict):
             self["routing"]["rules"].insert(0, rule)
 
     def get_inbound(self, tag) -> dict:
-        for inbound in self.get('inbounds', []):
+        for inbound in self['inbounds']:
             if inbound['tag'] == tag:
                 return inbound
 
     def get_outbound(self, tag) -> dict:
-        for outbound in self.get('outbounds', []):
+        for outbound in self['outbounds']:
             if outbound['tag'] == tag:
-                return outbound
+                outbound
 
     def to_json(self, **json_kwargs):
         return json.dumps(self, **json_kwargs)

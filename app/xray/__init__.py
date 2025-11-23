@@ -1,7 +1,6 @@
 import atexit
-import logging
 
-from app.utils.xray_defaults import load_legacy_xray_config
+from app.utils import check_port
 from app.xray.config import XRayConfig
 from app.xray.core import XRayCore
 from xray_api import XRay
@@ -9,62 +8,20 @@ from xray_api import exceptions
 from xray_api import exceptions as exc
 from xray_api import types
 
-from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
-
-logger = logging.getLogger("uvicorn.error")
-
-
-def _try_load_config_from_db(api_port: int) -> XRayConfig | None:
-    try:
-        from app.db import GetDB
-        from app.db import crud
-    except ImportError:
-        return None
-
-    try:
-        with GetDB() as db:
-            payload = crud.get_xray_config(db)
-    except Exception as err:  # pragma: no cover
-        logger.warning("Unable to load Xray config from database: %s", err)
-        return None
-
-    if not payload:
-        return None
-
-    try:
-        return XRayConfig(payload, api_port=api_port)
-    except Exception as err:  # pragma: no cover
-        logger.warning("Database Xray config is invalid: %s", err)
-        return None
-
-
-def _load_initial_xray_config(api_port: int) -> XRayConfig:
-    db_config = _try_load_config_from_db(api_port)
-    if db_config:
-        return db_config
-
-    logger.warning("Xray config not found in database, using default config")
-    legacy = load_legacy_xray_config()
-    return XRayConfig(legacy, api_port=api_port)
-
+from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH, XRAY_JSON
 
 # Search for a free API port from 8080
-api_port = 8080  # Default port
 try:
-    from app.utils import check_port
     for api_port in range(8080, 65536):
         if not check_port(api_port):
             break
 finally:
-    config = _load_initial_xray_config(api_port)
+    config = XRayConfig(XRAY_JSON, api_port=api_port)
     del api_port
 
 
 core = XRayCore(XRAY_EXECUTABLE_PATH, XRAY_ASSETS_PATH)
-try:
-    core.start(config)
-except Exception as e:
-    logger.error("Failed to start XRay core: %s", e)
+core.start(config)
 
 
 @atexit.register
