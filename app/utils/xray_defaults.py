@@ -7,11 +7,7 @@ import os
 
 import commentjson
 
-from config import XRAY_LOG_DIR
-
-XRAY_LOG_DIR_PATH = Path(XRAY_LOG_DIR).expanduser()
-DEFAULT_ACCESS_LOG_PATH = XRAY_LOG_DIR_PATH / "access.log"
-DEFAULT_ERROR_LOG_PATH = XRAY_LOG_DIR_PATH / "error.log"
+from config import XRAY_LOG_DIR, XRAY_ASSETS_PATH
 
 
 _DEFAULT_XRAY_CONFIG: dict[str, Any] = {
@@ -56,20 +52,15 @@ _DEFAULT_XRAY_CONFIG: dict[str, Any] = {
 
 def apply_log_paths(config: dict[str, Any]) -> dict[str, Any]:
     """
-    Ensure Xray log paths point to the Rebecca data directory unless explicitly disabled.
+    Normalize presence of log config without forcing absolute paths; actual paths are resolved per-runtime.
     """
     cfg = deepcopy(config or {})
     log_cfg = cfg.get("log") or {}
     if not isinstance(log_cfg, dict):
         log_cfg = {}
-
-    def _normalize(value: Any, filename: str) -> str:
-        if isinstance(value, str) and value.strip().lower() == "none":
-            return "none"
-        return str(XRAY_LOG_DIR_PATH / filename)
-
-    log_cfg["access"] = _normalize(log_cfg.get("access"), "access.log")
-    log_cfg["error"] = _normalize(log_cfg.get("error"), "error.log")
+    # Keep existing values; set defaults to empty (stdout) so callers can override at runtime.
+    log_cfg.setdefault("access", log_cfg.get("access", ""))
+    log_cfg.setdefault("error", log_cfg.get("error", ""))
     cfg["log"] = log_cfg
     return cfg
 

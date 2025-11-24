@@ -122,9 +122,9 @@ const SERVICES_OPTIONS: { label: string; value: string }[] = [
   { label: "Speedtest", value: "geosite:speedtest" },
 ];
 
-const XRAY_LOG_DIR = "/var/lib/rebecca/xray-core";
-const DEFAULT_ACCESS_LOG_PATH = `${XRAY_LOG_DIR}/access.log`;
-const DEFAULT_ERROR_LOG_PATH = `${XRAY_LOG_DIR}/error.log`;
+const XRAY_LOG_DIR_HINT = "/var/lib/rebecca/xray-core";
+const DEFAULT_ACCESS_LOG_PATH = `${XRAY_LOG_DIR_HINT}/access.log`;
+const DEFAULT_ERROR_LOG_PATH = `${XRAY_LOG_DIR_HINT}/error.log`;
 
 type OutboundJson = Record<string, any>;
 
