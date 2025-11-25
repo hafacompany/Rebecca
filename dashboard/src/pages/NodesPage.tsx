@@ -55,6 +55,8 @@ import { CoreVersionDialog } from "../components/CoreVersionDialog";
 import { GeoUpdateDialog } from "../components/GeoUpdateDialog";
 import type { Status as UserStatus } from "types/User";
 
+const normalizeVersion = (value?: string | null) => (value ?? "").trim().replace(/^v/i, "");
+
 dayjs.extend(utc);
 
 const AddIconStyled = chakra(AddIcon, { baseStyle: { w: 4, h: 4 } });
@@ -197,6 +199,21 @@ export const NodesPage: FC = () => {
       enabled: canManageNodes,
     },
   );
+  const latestNodeRelease = useQuery({
+    queryKey: ["node-latest-release"],
+    queryFn: async () => {
+      const response = await window.fetch(
+        "https://api.github.com/repos/rebeccapanel/Rebecca-node/releases/latest",
+        { headers: { Accept: "application/vnd.github+json" } }
+      );
+      if (!response.ok) throw new Error("Failed to load latest node release");
+      return response.json();
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+    enabled: canManageNodes,
+  });
 
   useEffect(() => {
     if (!canManageNodes) {
@@ -227,6 +244,17 @@ export const NodesPage: FC = () => {
       setMasterLimitDirty(false);
     }
   }, [masterState, masterLimitDirty, masterLimitInput]);
+
+  const currentNodeVersion = useMemo(
+    () => nodes?.find((nodeItem) => nodeItem.node_service_version)?.node_service_version ?? "",
+    [nodes]
+  );
+  const latestNodeVersion =
+    latestNodeRelease.data?.tag_name || latestNodeRelease.data?.name || "";
+  const isNodeUpdateAvailable =
+    normalizeVersion(latestNodeVersion) &&
+    normalizeVersion(currentNodeVersion) &&
+    normalizeVersion(latestNodeVersion) !== normalizeVersion(currentNodeVersion);
 
   const { isLoading: isAdding, mutate: addNodeMutate } = useMutation(addNode, {
     onSuccess: () => {
@@ -769,6 +797,32 @@ export const NodesPage: FC = () => {
             "Manage your master and satellite nodes. Update core versions, control availability, and edit node settings."
           )}
         </Text>
+        <HStack spacing={2} flexWrap="wrap" pt={1}>
+          {currentNodeVersion ? (
+            <Tag size="sm" colorScheme="gray">
+              {t("nodes.nodeServiceVersionTag", {
+                version: currentNodeVersion,
+              })}
+            </Tag>
+          ) : (
+            <Tag size="sm" colorScheme="gray">
+              {t("nodes.nodeServiceVersionUnknown", "Node version unknown")}
+            </Tag>
+          )}
+          {latestNodeVersion ? (
+            <Tag size="sm" colorScheme="blue">
+              {t("nodes.latestNodeVersionTag", {
+                version: latestNodeVersion,
+                defaultValue: "Latest node: v{{version}}",
+              })}
+            </Tag>
+          ) : null}
+          {isNodeUpdateAvailable && (
+            <Tag size="sm" colorScheme="green">
+              {t("nodes.nodeUpdateAvailable", "Update available")}
+            </Tag>
+          )}
+        </HStack>
       </Stack>
 
       {hasError && (

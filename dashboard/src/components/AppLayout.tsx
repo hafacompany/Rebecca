@@ -64,7 +64,7 @@ export function AppLayout() {
 
   const languageItems = [
     { code: "en", label: "English", flag: "US" },
-    { code: "fa", label: "فارسی", flag: "IR" },
+    { code: "fa", label: "پارسی", flag: "IR" },
     { code: "zh-cn", label: "中文", flag: "CN" },
     { code: "ru", label: "Русский", flag: "RU" },
   ];

@@ -52,6 +52,7 @@ const iconProps = {
 const ChartIcon = chakra(ChartBarIcon, iconProps);
 
 const formatNumberValue = (value: number) => numberWithCommas(value) ?? value.toString();
+const normalizeVersion = (value?: string | null) => (value ?? "").trim().replace(/^v/i, "");
 
 const HISTORY_INTERVALS = [
   { labelKey: "historyInterval.2m", seconds: 120 },
@@ -343,6 +344,26 @@ const SystemOverviewCard: FC<{
   const cpuHistoryValues = data.cpu_history.map((entry) => entry.value);
   const memoryHistoryValues = data.memory_history.map((entry) => entry.value);
   const networkHistoryValues = data.network_history.map((entry) => entry.incoming);
+  const latestPanelRelease = useQuery({
+    queryKey: ["panel-latest-release"],
+    queryFn: async () => {
+      const response = await window.fetch(
+        "https://api.github.com/repos/rebeccapanel/Rebecca/releases/latest",
+        { headers: { Accept: "application/vnd.github+json" } }
+      );
+      if (!response.ok) throw new Error("Failed to load latest panel release");
+      return response.json();
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+  const latestPanelVersion =
+    latestPanelRelease.data?.tag_name || latestPanelRelease.data?.name || "";
+  const isPanelUpdateAvailable =
+    normalizeVersion(latestPanelVersion) &&
+    normalizeVersion(data.version) &&
+    normalizeVersion(latestPanelVersion) !== normalizeVersion(data.version);
   return (
     <Card p={5} borderRadius="12px" boxShadow="none">
       <Stack spacing={4}>
@@ -355,10 +376,25 @@ const SystemOverviewCard: FC<{
           <Text fontSize="lg" fontWeight="semibold">
             {t("systemOverview")}
           </Text>
-          <Wrap spacing={2} shouldWrapChildren justify={{ base: "flex-start", md: "flex-end" }}>
+          <Wrap spacing={2} justify={{ base: "flex-start", md: "flex-end" }}>
             <WrapItem>
               <Tag colorScheme="gray">v{data.version}</Tag>
             </WrapItem>
+            {latestPanelVersion && (
+              <WrapItem>
+                <Tag colorScheme={isPanelUpdateAvailable ? "green" : "blue"}>
+                  {isPanelUpdateAvailable
+                    ? t("system.updateAvailable", {
+                        version: latestPanelVersion,
+                        defaultValue: "Update available: v{{version}}",
+                      })
+                    : t("system.latestRelease", {
+                        version: latestPanelVersion,
+                        defaultValue: "Latest release: v{{version}}",
+                      })}
+                </Tag>
+              </WrapItem>
+            )}
             <WrapItem>
               <Tag colorScheme="gray">
                 {t("loadAverage")}: {" "}
@@ -727,6 +763,27 @@ export const Statistics: FC<BoxProps> = (props) => {
   });
   const [historyPayload, setHistoryPayload] = useState<HistoryModalPayload | null>(null);
   const [historyInterval, setHistoryInterval] = useState(HISTORY_INTERVALS[0].seconds);
+  const latestPanelRelease = useQuery({
+    queryKey: ["panel-latest-release"],
+    queryFn: async () => {
+      const response = await window.fetch(
+        "https://api.github.com/repos/rebeccapanel/Rebecca/releases/latest",
+        { headers: { Accept: "application/vnd.github+json" } }
+      );
+      if (!response.ok) throw new Error("Failed to load latest panel release");
+      return response.json();
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  const latestPanelVersion = latestPanelRelease.data?.tag_name || latestPanelRelease.data?.name || "";
+  const currentPanelVersion = systemData?.version || version || "";
+  const isPanelUpdateAvailable =
+    normalizeVersion(latestPanelVersion) &&
+    normalizeVersion(currentPanelVersion) &&
+    normalizeVersion(latestPanelVersion) !== normalizeVersion(currentPanelVersion);
 
   const canSeeGlobal =
     userData.role === AdminRole.Sudo || userData.role === AdminRole.FullAccess;

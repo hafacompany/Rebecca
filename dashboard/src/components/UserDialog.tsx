@@ -2151,6 +2151,26 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                     <FormLabel>{t("userDialog.selectServiceLabel", "Service")}</FormLabel>
 
+                    {!servicesLoading && !hasServices && (
+                      <Alert status="warning" borderRadius="md" mb={4}>
+                        <AlertIcon />
+                        <VStack align="flex-start" spacing={1}>
+                          <Text>
+                            {t(
+                              "userDialog.noServicesAvailable",
+                              "No services are available yet."
+                            )}
+                          </Text>
+                          <Text>
+                            {t(
+                              "userDialog.createServiceToManage",
+                              "Create a service to manage users."
+                            )}
+                          </Text>
+                        </VStack>
+                      </Alert>
+                    )}
+
                     {servicesLoading ? (
 
                       <HStack spacing={2} py={4}>
@@ -2396,22 +2416,6 @@ export const UserDialog: FC<UserDialogProps> = () => {
                         })}
 
                       </VStack>
-
-                    ) : (
-
-                      <Alert status="warning" borderRadius="md">
-
-                        <AlertIcon />
-
-                        {t(
-
-                          "userDialog.noServicesAvailable",
-
-                          "No services are available yet. Create a service to manage users."
-
-                        )}
-
-                      </Alert>
 
                     )}
 

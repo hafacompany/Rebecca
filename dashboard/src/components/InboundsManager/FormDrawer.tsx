@@ -149,6 +149,7 @@ export const InboundFormModal: FC<Props> = ({
   const [portWarning, setPortWarning] = useState<string | null>(null);
   const [tagError, setTagError] = useState<string | null>(null);
   const [portError, setPortError] = useState<string | null>(null);
+  const [defaultsSeeded, setDefaultsSeeded] = useState(false);
   const { fields: fallbackFields, append: appendFallback, remove: removeFallback } = useFieldArray({
     control,
     name: "fallbacks",
@@ -212,10 +213,12 @@ export const InboundFormModal: FC<Props> = ({
         const formValues = rawInboundToFormValues(initialValue);
         reset(formValues);
         setTagManuallyEdited(true);
+        setDefaultsSeeded(false);
       } else {
         reset(createDefaultInboundForm());
         setTagManuallyEdited(false);
         setPortWarning(null);
+        setDefaultsSeeded(false);
       }
     }
   }, [initialValue, reset, isOpen]);
@@ -271,15 +274,28 @@ export const InboundFormModal: FC<Props> = ({
   }, [BLOCKED_PORTS, form]);
 
   useEffect(() => {
-    if (mode === "create" && !initialValue) {
-      // Seed defaults on open
-      const currentPort = portValue || generateRandomPort();
-      const nextTag = computeAutoTag(currentProtocol, streamNetwork, currentPort);
-      form.setValue("tag", nextTag, { shouldDirty: true });
-      setTagError(null);
-      setPortError(null);
+    if (mode !== "create" || initialValue || !isOpen || defaultsSeeded) {
+      return;
     }
-  }, [mode, initialValue, currentProtocol, streamNetwork, portValue, computeAutoTag, generateRandomPort, form]);
+    const existingPort = form.getValues("port");
+    const currentPort = existingPort || generateRandomPort();
+    const nextTag = computeAutoTag(currentProtocol, streamNetwork, currentPort);
+    form.setValue("port", currentPort, { shouldDirty: true });
+    form.setValue("tag", nextTag, { shouldDirty: true });
+    setTagError(null);
+    setPortError(null);
+    setDefaultsSeeded(true);
+  }, [
+    mode,
+    initialValue,
+    isOpen,
+    defaultsSeeded,
+    currentProtocol,
+    streamNetwork,
+    computeAutoTag,
+    generateRandomPort,
+    form,
+  ]);
 
   useEffect(() => {
     if (mode === "create" && !tagManuallyEdited) {
