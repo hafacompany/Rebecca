@@ -2185,7 +2185,8 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                       </HStack>
 
-                    ) : hasServices ? (
+                    ) : (
+                      hasServices ? (
 
                       <VStack align="stretch" spacing={3}>
 
@@ -2417,6 +2418,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                       </VStack>
 
+                      ) : null
                     )}
 
                     {selectedService && (
