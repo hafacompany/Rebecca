@@ -33,17 +33,27 @@ export const AdvertisementCard: FC<AdvertisementCardProps> = ({
   const isImageAd = ad.type === "image" || Boolean(ad.image_url);
   const imageRatio = ratio ?? (compact ? 3 / 1 : 1);
   const maxSizePx = maxSize ?? 460;
+  const isImageAdOnly = isImageAd && compact;
   const content = isImageAd ? (
-    <AspectRatio ratio={imageRatio} w="full">
+    <Box
+      w="100%"
+      h="100%"
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      overflow="hidden"
+    >
       <Image
         alt={ad.title || ad.text || "Advertisement"}
-        borderRadius="md"
-        objectFit="contain"
+        borderRadius={isImageAdOnly ? "lg" : "md"}
+        objectFit={isImageAdOnly ? "cover" : "contain"}
         src={ad.image_url}
-        w="100%"
-        h="100%"
+        maxH="100%"
+        maxW="100%"
+        h={isImageAdOnly ? "100%" : "auto"}
+        w={isImageAdOnly ? "100%" : "auto"}
       />
-    </AspectRatio>
+    </Box>
   ) : (
     <Stack spacing={1}>
       {ad.title && (
@@ -65,18 +75,24 @@ export const AdvertisementCard: FC<AdvertisementCardProps> = ({
 
   const body = (
     <Box
-      borderColor={borderColor}
-      borderWidth="1px"
+      borderColor={isImageAdOnly ? "transparent" : borderColor}
+      borderWidth={isImageAdOnly ? "0" : "1px"}
       borderRadius="md"
-      bg={useColorModeValue("white", "gray.800")}
-      px={paddingX}
-      py={paddingY}
-      w="full"
-      maxW={`${maxSizePx}px`}
-      shadow="sm"
+      bg={isImageAdOnly ? "transparent" : useColorModeValue("white", "gray.800")}
+      px={isImageAdOnly ? 0 : paddingX}
+      py={isImageAdOnly ? 0 : paddingY}
+      w={isImageAdOnly ? "100%" : "full"}
+      h={isImageAdOnly ? "100%" : "auto"}
+      maxW={isImageAdOnly ? "100%" : `${maxSizePx}px`}
+      maxH={isImageAdOnly ? "100%" : "none"}
+      shadow={isImageAdOnly ? "none" : "sm"}
       transition="box-shadow 0.2s ease"
+      display={isImageAdOnly ? "flex" : "block"}
+      alignItems={isImageAdOnly ? "center" : "flex-start"}
+      justifyContent={isImageAdOnly ? "center" : "flex-start"}
+      overflow="hidden"
       _hover={{
-        shadow: "md",
+        shadow: isImageAdOnly ? "none" : "md",
       }}
     >
       {content}

@@ -315,6 +315,7 @@ def user_subscription_info_by_key(
 
 @router.get("/{username}/{credential_key}/usage")
 def user_get_usage_by_key(
+    username: str,
     credential_key: str = Path(...),
     dbuser: UserResponse = Depends(get_validated_sub_by_key),
     start: str = "",

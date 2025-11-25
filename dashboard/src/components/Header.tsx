@@ -36,9 +36,6 @@ import { Link } from "react-router-dom";
 import { GitHubStars } from "./GitHubStars";
 import ThemeSelector from "./ThemeSelector";
 import useGetUser from "hooks/useGetUser";
-import useAds from "hooks/useAds";
-import { AdvertisementCard } from "./AdvertisementCard";
-import { pickLocalizedAd } from "utils/ads";
 import ReactCountryFlag from "react-country-flag";
 import { AdminSection, UserPermissionToggle } from "types/Admin";
 import { ReactComponent as ImperialIranFlag } from "../assets/imperial-iran-flag.svg";
@@ -64,11 +61,7 @@ const LanguageIconStyled = chakra(LanguageIcon, iconProps);
 
 export const Header: FC<HeaderProps> = ({ actions }) => {
   const { userData, getUserIsSuccess, getUserIsPending } = useGetUser();
-  const shouldShowAds = getUserIsSuccess;
-  const { data: adsData } = useAds(shouldShowAds);
   const { t, i18n } = useTranslation();
-  const currentLanguage = i18n.language || "en";
-  const headerAd = shouldShowAds ? pickLocalizedAd(adsData, "header", currentLanguage) : undefined;
 
   const sectionAccess = userData.permissions?.sections;
   const canAccessHosts = Boolean(sectionAccess?.[AdminSection.Hosts]);
@@ -111,16 +104,6 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
       </Text>
       <HStack alignItems="center" spacing={3} flexWrap="wrap" justifyContent="flex-end">
         {actions}
-
-        {headerAd && (
-          <Box
-            flexShrink={0}
-            h={{ base: "40px", md: "60px" }}
-            w={{ base: "140px", md: "200px" }}
-          >
-            <AdvertisementCard ad={headerAd} compact ratio={3 / 1} maxSize={520} />
-          </Box>
-        )}
 
         <Menu>
           <MenuButton

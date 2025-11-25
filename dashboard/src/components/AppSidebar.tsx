@@ -331,8 +331,8 @@ export const AppSidebar: FC<AppSidebarProps> = ({ collapsed, inDrawer = false, o
         })}
         </Box>
         {sidebarAd && !collapsed && (
-          <Box px={collapsed ? 2 : 3} py={3} mt={4} w="full">
-            <AdvertisementCard ad={sidebarAd} />
+          <Box px={collapsed ? 2 : 2.5} py={2.5} mt={4} w="full">
+            <AdvertisementCard ad={sidebarAd} maxSize={440} />
           </Box>
         )}
         {getUserIsSuccess && userData.username && (

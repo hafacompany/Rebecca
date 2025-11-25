@@ -117,10 +117,21 @@ const PRIMARY_VARS = [
   "--primary-900",
 ];
 
+const DEFAULT_LIGHT_MODE: ModeConfig = {
+  primary: "#396fe4",
+  bg: "#f6f8ff",
+  surface: "#ffffff",
+};
+
+const DEFAULT_DARK_MODE: ModeConfig = {
+  primary: "#4f46e5",
+  bg: "#0f172a",
+  surface: "#141f35",
+};
+
 const BUILTIN_THEMES: ThemeDefinition[] = [
   { key: "light", accent: "#f7fafc", colorModeTarget: "light" },
-  { key: "dark", accent: "#1a202c", colorModeTarget: "dark", className: "rb-theme-dark" },
-  { key: "default", accent: "#396fe4" },
+  { key: "dark", accent: DEFAULT_DARK_MODE.primary, colorModeTarget: "dark", className: "rb-theme-dark" },
   { key: "ultra-dark", accent: "#319795", className: "rb-theme-ultra-dark" },
   { key: "moontone", accent: "#3b82f6", className: "rb-theme-moontone" },
   { key: "purple", accent: "#7c3aed", className: "rb-theme-purple" },
@@ -168,18 +179,6 @@ const PRESET_THEMES: PresetDefinition[] = [
     },
   },
 ];
-
-const DEFAULT_LIGHT_MODE: ModeConfig = {
-  primary: "#396fe4",
-  bg: "#f6f8ff",
-  surface: "#ffffff",
-};
-
-const DEFAULT_DARK_MODE: ModeConfig = {
-  primary: "#4f46e5",
-  bg: "#0f172a",
-  surface: "#141f35",
-};
 
 const SURFACE_BLEND_LIGHT = 0.14;
 const SURFACE_BLEND_DARK = 0.22;
@@ -507,7 +506,7 @@ export const ThemeSelector: FC<ThemeSelectorProps> = ({
   useEffect(() => {
     if (active.startsWith("custom:")) {
       const exists = customThemes.some((theme) => `custom:${theme.id}` === active);
-      if (!exists) setActive("default");
+      if (!exists) setActive("dark");
     }
   }, [active, customThemes]);
 
@@ -523,7 +522,20 @@ export const ThemeSelector: FC<ThemeSelectorProps> = ({
 
     if (builtIn) {
       if (builtIn.className) root.classList.add(builtIn.className);
-      updateThemeColor(builtIn.key);
+      
+      // Apply DEFAULT_DARK_MODE colors to dark theme
+      if (builtIn.key === "dark") {
+        const palette = generatePalette(DEFAULT_DARK_MODE.primary);
+        applyPaletteToRoot(palette, {
+          bgLight: DEFAULT_LIGHT_MODE.bg,
+          bgDark: DEFAULT_DARK_MODE.bg,
+          surfaceLight: DEFAULT_LIGHT_MODE.surface,
+          surfaceDark: DEFAULT_DARK_MODE.surface,
+        });
+        updateThemeColor("dark", DEFAULT_DARK_MODE.bg);
+      } else {
+        updateThemeColor(builtIn.key);
+      }
       return;
     }
 
@@ -540,7 +552,7 @@ export const ThemeSelector: FC<ThemeSelectorProps> = ({
       });
       updateThemeColor("custom", colorMode === "dark" ? theme.dark.bg : theme.light.bg);
     } else {
-      updateThemeColor("default");
+      updateThemeColor("dark");
     }
   }, [active, customThemes, colorMode]);
 
@@ -628,7 +640,7 @@ export const ThemeSelector: FC<ThemeSelectorProps> = ({
   const handleDeleteCustom = (id: string) => {
     setCustomThemes((prev) => prev.filter((item) => item.id !== id));
     if (active === `custom:${id}`) {
-      setActive("default");
+      setActive("dark");
     }
     toast({ status: "info", title: t("theme.customDeleted") });
   };

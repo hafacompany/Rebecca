@@ -41,6 +41,7 @@ import { useTranslation } from "react-i18next";
 import ReactCountryFlag from "react-country-flag";
 import ThemeSelector from "./ThemeSelector";
 import { ReactComponent as ImperialIranFlag } from "../assets/imperial-iran-flag.svg";
+import useGetUser from "hooks/useGetUser";
 
 const iconProps = {
   baseStyle: {
@@ -102,6 +103,8 @@ export function AppLayout() {
           px="6"
           justifyContent="space-between"
           flexShrink={0}
+          position="relative"
+          overflow="hidden"
         >
           <IconButton
             size="sm"
@@ -112,8 +115,9 @@ export function AppLayout() {
               else setSidebarCollapsed(!sidebarCollapsed);
             }}
             icon={<MenuIcon />}
+            flexShrink={0}
           />
-          <HStack spacing={2}>
+          <HStack spacing={2} alignItems="center" flexShrink={0}>
             <GitHubStars />
             <Popover
               isOpen={actionsMenu.isOpen}

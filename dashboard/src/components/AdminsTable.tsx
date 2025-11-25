@@ -438,39 +438,43 @@ export const AdminsTable = () => {
                       ? handleSort(col.key as "username" | "users_count" | "data" | "id")
                       : undefined
                   }
-                  borderRight={col.key === "id" ? "1px solid" : undefined}
-                  borderColor={col.key === "id" ? tableHeaderBorderColor : "transparent"}
                   cursor={
                     col.key === "username" || col.key === "users_count" || col.key === "data" || col.key === "id"
                       ? "pointer"
                       : "default"
                   }
-                  textAlign={col.key === "actions" ? "right" : "left"}
+                  textAlign={col.key === "actions" ? "right" : col.key === "id" ? "center" : "left"}
                   display={{ base: col.key === "id" ? "none" : "table-cell", md: "table-cell" }}
-                  px={col.key === "id" ? 1 : undefined}
+                  px={col.key === "id" ? 2 : undefined}
+                  pr={col.key === "id" ? 1 : undefined}
+                  pl={col.key === "id" ? 2 : undefined}
                   width={col.key === "id" ? idColumnWidth : undefined}
                   minW={col.key === "id" ? idColumnWidth : undefined}
                   maxW={col.key === "id" ? idColumnMaxWidth : undefined}
                   whiteSpace={col.key === "id" ? "nowrap" : undefined}
                 >
-                  <HStack justify={col.key === "actions" ? "flex-end" : "flex-start"}>
-                    <Text>{col.label}</Text>
-                    {col.key === "data" ? (
-                      <Menu>
-                        <MenuButton as={IconButton} size="xs" variant="ghost" icon={<SortIndicator column="data" />} />
-                        <MenuList>
-                          <MenuItem onClick={() => handleSort("data_usage")}>
-                            {t("admins.sortByUsage")}
-                          </MenuItem>
-                          <MenuItem onClick={() => handleSort("data_limit")}>
-                            {t("admins.sortByLimit")}
-                          </MenuItem>
-                        </MenuList>
-                      </Menu>
-                    ) : col.key === "username" || col.key === "users_count" || col.key === "id" ? (
-                      <SortIndicator column={col.key as "username" | "users_count" | "id"} />
-                    ) : null}
-                  </HStack>
+                  {col.key === "id" ? (
+                    <Text textAlign="center" w="full">{col.label}</Text>
+                  ) : (
+                    <HStack justify={col.key === "actions" ? "flex-end" : "flex-start"}>
+                      <Text>{col.label}</Text>
+                      {col.key === "data" ? (
+                        <Menu>
+                          <MenuButton as={IconButton} size="xs" variant="ghost" icon={<SortIndicator column="data" />} />
+                          <MenuList>
+                            <MenuItem onClick={() => handleSort("data_usage")}>
+                              {t("admins.sortByUsage")}
+                            </MenuItem>
+                            <MenuItem onClick={() => handleSort("data_limit")}>
+                              {t("admins.sortByLimit")}
+                            </MenuItem>
+                          </MenuList>
+                        </Menu>
+                      ) : col.key === "username" || col.key === "users_count" ? (
+                        <SortIndicator column={col.key as "username" | "users_count"} />
+                      ) : null}
+                    </HStack>
+                  )}
                 </Th>
               ))}
             </Tr>
@@ -512,17 +516,16 @@ export const AdminsTable = () => {
                 >
                   <Td 
                     display={{ base: "none", md: "table-cell" }} 
-                    px={1} 
+                    px={2}
                     pr={1}
-                    borderRight="1px solid" 
-                    borderColor="gray.200" 
-                    _dark={{ borderColor: "gray.700" }}
+                    pl={2}
                     width={idColumnWidth}
                     minW={idColumnWidth}
                     maxW={idColumnMaxWidth}
                     whiteSpace="nowrap"
                     overflow="hidden"
                     textOverflow="ellipsis"
+                    textAlign="center"
                   >
                     <Text fontWeight="medium" color="gray.700" _dark={{ color: "gray.300" }} fontSize="sm">
                       {admin.id}

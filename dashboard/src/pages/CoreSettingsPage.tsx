@@ -292,7 +292,6 @@ export const CoreSettingsPage: FC = () => {
   const isMobile = useBreakpointValue({ base: true, md: false });
   const [jsonKey, setJsonKey] = useState(0); // force re-render of JsonEditor
   const [warpOptionValue, setWarpOptionValue] = useState<string>("");
-  const [isWarpSelectOpen, setIsWarpSelectOpen] = useState(false);
   const [warpCustomDomain, setWarpCustomDomain] = useState<string>("");
   
   const basicSectionBorder = useColorModeValue("gray.200", "whiteAlpha.300");
@@ -1299,30 +1298,26 @@ export const CoreSettingsPage: FC = () => {
                   ))}
                 </Wrap>
                 <HStack spacing={3} flexWrap="wrap">
-                  {!isWarpSelectOpen && (
-                    <Select
-                      placeholder={t("core.select", "Select...")}
-                      size="sm"
-                      maxW="240px"
-                      value={warpOptionValue}
-                      onChange={(event) => {
-                        const { value } = event.target;
-                        if (value) {
-                          handleWarpDomainAdd(value);
-                        }
-                        setWarpOptionValue("");
-                      }}
-                      onFocus={() => setIsWarpSelectOpen(true)}
-                      onBlur={() => setIsWarpSelectOpen(false)}
-                      isDisabled={availableWarpOptions.length === 0}
-                    >
-                      {availableWarpOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
+                  <Select
+                    placeholder={t("core.select", "Select...")}
+                    size="sm"
+                    maxW="240px"
+                    value={warpOptionValue}
+                    onChange={(event) => {
+                      const { value } = event.target;
+                      if (value) {
+                        handleWarpDomainAdd(value);
+                      }
+                      setWarpOptionValue("");
+                    }}
+                    isDisabled={availableWarpOptions.length === 0}
+                  >
+                    {availableWarpOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
                   <HStack spacing={2} maxW="320px" flex="1">
                     <Input
                       size="sm"

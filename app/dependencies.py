@@ -87,7 +87,7 @@ def get_validated_sub(
 
 def get_validated_sub_by_key(
         username: str,
-        credential_key: str = Path(..., regex="^[0-9a-fA-F]{32}$"),
+        credential_key: str = Path(..., regex="^[0-9a-fA-F-]{32,36}$"),
         db: Session = Depends(get_db),
 ) -> UserResponse:
     try:
@@ -128,7 +128,7 @@ def get_validated_sub_by_key_only(
     dbuser = (
         db.query(User)
         .filter(User.credential_key.isnot(None))
-        .filter(User.credential_key == normalized_key)
+        .filter(func.replace(func.lower(User.credential_key), "-", "") == normalized_key)
         .first()
     )
     if not dbuser:

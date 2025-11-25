@@ -2002,13 +2002,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                     form.setValue("next_plan_data_limit", null, { shouldDirty: true });
                                     return;
                                   }
-                                  const parsed = Number(rawValue);
-                                  if (Number.isNaN(parsed)) {
+                                  // Allow partial decimals while typing (e.g., "0.", "1.5")
+                                  if (!/^[0-9]*\\.?[0-9]*$/.test(rawValue)) {
                                     return;
                                   }
-                                  form.setValue("next_plan_data_limit", Math.max(0, parsed), {
-                                    shouldDirty: true,
-                                  });
+                                  form.setValue("next_plan_data_limit", rawValue, { shouldDirty: true });
                                 }}
                               />
                             </FormControl>
@@ -2792,7 +2790,6 @@ export const UserDialog: FC<UserDialogProps> = () => {
   );
 
 };
-
 
 
 
