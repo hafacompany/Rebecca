@@ -1,7 +1,11 @@
 from random import randint
+import threading
+import time
 from typing import TYPE_CHECKING, Dict, Optional, Sequence
 
 from app.db import GetDB, crud
+from app.db import models as db_models
+from sqlalchemy.orm import joinedload
 from app.models.proxy import ProxyHostSecurity
 from app.utils.store import DictStorage
 from app.utils.system import check_port
@@ -38,79 +42,138 @@ api = XRayAPI(config.api_host, config.api_port)
 
 nodes: Dict[int, XRayNode] = {}
 service_hosts_cache: Dict[Optional[int], Dict[str, list]] = {}
+service_hosts_cache_ts: Optional[float] = None
+
+HOSTS_CACHE_TTL = 900  # 15 minutes
+_hosts_cache_lock = threading.RLock()
+
+
+def _empty_host_map() -> Dict[str, list]:
+    return {tag: [] for tag in config.inbounds_by_tag.keys()}
+
+
+def _host_to_dict(host: "ProxyHost", service_ids: Optional[Sequence[int]] = None) -> dict:
+    return {
+        "remark": host.remark,
+        "address": [i.strip() for i in host.address.split(",")] if host.address else [],
+        "port": host.port,
+        "path": host.path if host.path else None,
+        "sni": [i.strip() for i in host.sni.split(",")] if host.sni else [],
+        "host": [i.strip() for i in host.host.split(",")] if host.host else [],
+        "alpn": host.alpn.value,
+        "fingerprint": host.fingerprint.value,
+        # None means the tls is not specified by host itself and
+        # complies with its inbound's settings.
+        "tls": None
+        if host.security == ProxyHostSecurity.inbound_default
+        else host.security.value,
+        "allowinsecure": host.allowinsecure,
+        "mux_enable": host.mux_enable,
+        "fragment_setting": host.fragment_setting,
+        "noise_setting": host.noise_setting,
+        "random_user_agent": host.random_user_agent,
+        "use_sni_as_host": host.use_sni_as_host,
+        "sort": host.sort if host.sort is not None else 0,
+        "id": host.id,
+        "service_ids": list(service_ids) if service_ids else [],
+    }
+
+
+def rebuild_service_hosts_cache() -> None:
+    """
+    Populate service_hosts_cache for all service_ids with deterministic ordering.
+    """
+    global service_hosts_cache_ts
+    with _hosts_cache_lock:
+        base_map = _empty_host_map()
+        cache: Dict[Optional[int], Dict[str, list]] = {None: {k: [] for k in base_map}}
+
+        inbound_tags = set(config.inbounds_by_tag.keys())
+        with GetDB() as db:
+            hosts = (
+                db.query(db_models.ProxyHost)
+                .options(
+                    joinedload(db_models.ProxyHost.service_links).joinedload(
+                        db_models.ServiceHostLink.service
+                    )
+                )
+                .filter(db_models.ProxyHost.inbound_tag.in_(inbound_tags))
+                .all()
+            )
+
+        for host in hosts:
+            if host.is_disabled:
+                continue
+            if host.inbound_tag not in inbound_tags:
+                continue
+
+            service_ids = [
+                link.service_id
+                for link in getattr(host, "service_links", [])
+                if link.service_id is not None
+            ]
+            host_dict = _host_to_dict(host, service_ids)
+            target_service_ids = service_ids or [None]
+
+            for service_id in target_service_ids:
+                host_map = cache.setdefault(
+                    service_id, {k: [] for k in base_map}
+                )
+                host_map.setdefault(host.inbound_tag, []).append(host_dict)
+
+        for host_map in cache.values():
+            for tag in config.inbounds_by_tag.keys():
+                host_map.setdefault(tag, [])
+                host_map[tag].sort(key=lambda h: (h.get("sort", 0), h.get("id") or 0))
+
+        service_hosts_cache.clear()
+        service_hosts_cache.update(cache)
+        service_hosts_cache_ts = time.time()
+
+
+def get_service_host_map(service_id: Optional[int]) -> Dict[str, list]:
+    """
+    Return host map for the given service_id with TTL-based refresh.
+    """
+    now = time.time()
+    with _hosts_cache_lock:
+        if (
+            not service_hosts_cache
+            or service_hosts_cache_ts is None
+            or now - service_hosts_cache_ts > HOSTS_CACHE_TTL
+        ):
+            rebuild_service_hosts_cache()
+
+        host_map = service_hosts_cache.get(service_id)
+        if host_map is None:
+            host_map = _empty_host_map()
+        else:
+            for tag in config.inbounds_by_tag.keys():
+                host_map.setdefault(tag, [])
+
+        return {tag: list(host_map.get(tag, [])) for tag in config.inbounds_by_tag.keys()}
 
 
 if TYPE_CHECKING:
     from app.db.models import ProxyHost
 
 
+def invalidate_service_hosts_cache() -> None:
+    """
+    Clear cached hosts so they will be rebuilt on next access.
+    """
+    global service_hosts_cache_ts
+    with _hosts_cache_lock:
+        service_hosts_cache.clear()
+        service_hosts_cache_ts = None
+
+
 @DictStorage
 def hosts(storage: dict):
     """
-    Reload hosts from the database using the latest in-memory Xray config.
-    Falls back to the initial config snapshot if runtime config is not set yet.
+    Reload hosts from the database using the cached host map.
     """
-    from app import runtime
-
     storage.clear()
-    service_hosts_cache.clear()
-    current_config = getattr(getattr(runtime, "xray", None), "config", None) or config
-
-    with GetDB() as db:
-        for inbound_tag in current_config.inbounds_by_tag:
-            inbound_hosts: Sequence["ProxyHost"] = crud.get_hosts(db, inbound_tag)
-            sorted_hosts = sorted(
-                inbound_hosts,
-                key=lambda host: (host.sort, host.id),
-            )
-
-            storage[inbound_tag] = [
-                {
-                    "remark": host.remark,
-                    "address": [i.strip() for i in host.address.split(',')] if host.address else [],
-                    "port": host.port,
-                    "path": host.path if host.path else None,
-                    "sni": [i.strip() for i in host.sni.split(',')] if host.sni else [],
-                    "host": [i.strip() for i in host.host.split(',')] if host.host else [],
-                    "alpn": host.alpn.value,
-                    "fingerprint": host.fingerprint.value,
-                    # None means the tls is not specified by host itself and
-                    # complies with its inbound's settings.
-                    "tls": None
-                    if host.security == ProxyHostSecurity.inbound_default
-                    else host.security.value,
-                    "allowinsecure": host.allowinsecure,
-                    "mux_enable": host.mux_enable,
-                    "fragment_setting": host.fragment_setting,
-                    "noise_setting": host.noise_setting,
-                    "random_user_agent": host.random_user_agent,
-                    "use_sni_as_host": host.use_sni_as_host,
-                    "sort": host.sort if host.sort is not None else 0,
-                    "id": host.id,
-                    "service_ids": [
-                        link.service_id
-                        for link in getattr(host, "service_links", [])
-                        if link.service_id is not None
-                    ],
-                }
-                for host in sorted_hosts
-                if not host.is_disabled
-            ]
-
-            # Cache hosts per service (and for unassigned hosts) to avoid repeated DB lookups.
-            all_service_ids = set()
-            for host in storage[inbound_tag]:
-                if host["service_ids"]:
-                    all_service_ids.update(host["service_ids"])
-                else:
-                    all_service_ids.add(None)
-            
-            for service_id in all_service_ids:
-                service_hosts_cache.setdefault(service_id, {}).setdefault(inbound_tag, [])
-            
-            service_hosts_cache.setdefault(None, {}).setdefault(inbound_tag, [])
-            
-            for host in storage[inbound_tag]:
-                target_services = host["service_ids"] if host["service_ids"] else [None]
-                for service_id in target_services:
-                    service_hosts_cache[service_id][inbound_tag].append(host)
+    rebuild_service_hosts_cache()
+    host_map = service_hosts_cache.get(None, _empty_host_map())
+    storage.update(host_map)

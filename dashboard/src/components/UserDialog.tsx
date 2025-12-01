@@ -2,6 +2,8 @@ import {
 
   Alert,
 
+  AlertDescription,
+
   AlertIcon,
 
   Box,
@@ -2150,23 +2152,28 @@ export const UserDialog: FC<UserDialogProps> = () => {
                     <FormLabel>{t("userDialog.selectServiceLabel", "Service")}</FormLabel>
 
                     {!servicesLoading && !hasServices && (
-                      <Alert status="warning" borderRadius="md" mb={4}>
-                        <AlertIcon />
-                        <VStack align="flex-start" spacing={1}>
-                          <Text>
-                            {t(
+                      <Box w="full" display="block" mt={2} mb={4}>
+                        <Alert
+                          status="warning"
+                          variant="subtle"
+                          w="full"
+                          px={4}
+                          py={3}
+                          borderRadius="md"
+                          alignItems="flex-start"
+                        >
+                          <AlertIcon />
+                          <AlertDescription>
+                            {`${t(
                               "userDialog.noServicesAvailable",
                               "No services are available yet."
-                            )}
-                          </Text>
-                          <Text>
-                            {t(
+                            )} ${t(
                               "userDialog.createServiceToManage",
                               "Create a service to manage users."
-                            )}
-                          </Text>
-                        </VStack>
-                      </Alert>
+                            )}`}
+                          </AlertDescription>
+                        </Alert>
+                      </Box>
                     )}
 
                     {servicesLoading ? (

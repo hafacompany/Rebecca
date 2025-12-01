@@ -79,6 +79,17 @@ _RECORD_CHANGED_ERRNO = 1020
 ADMIN_DATA_LIMIT_EXHAUSTED_REASON_KEY = "admin_data_limit_exhausted"
 
 
+def _invalidate_hosts_cache() -> None:
+    try:
+        from app.runtime import xray
+
+        if getattr(xray, "invalidate_service_hosts_cache", None):
+            xray.invalidate_service_hosts_cache()
+    except Exception:
+        # Cache invalidation should never break main flows
+        _logger.debug("Failed to invalidate hosts cache", exc_info=True)
+
+
 def _is_record_changed_error(exc: OperationalError) -> bool:
     orig = getattr(exc, "orig", None)
     if not orig:
@@ -263,6 +274,7 @@ class ProxyInboundRepository:
         )
         self.db.add(host)
         self.db.commit()
+        _invalidate_hosts_cache()
 
     def get_or_create(self, inbound_tag: str) -> ProxyInbound:
         inbound = (
@@ -294,7 +306,8 @@ class ProxyInboundRepository:
             return False
 
         if inbound.hosts:
-            raise ValueError("Inbound has hosts assigned. Remove hosts before deleting.")
+            # Remove all hosts for this inbound and detach any service links.
+            self.remove_all_hosts(inbound_tag)
 
         self.db.execute(
             delete(excluded_inbounds_association).where(
@@ -309,6 +322,7 @@ class ProxyInboundRepository:
 
         self.db.delete(inbound)
         self.db.flush()
+        _invalidate_hosts_cache()
         return True
 
     # endregion
@@ -336,6 +350,7 @@ class ProxyInboundRepository:
         inbound.hosts.append(new_host)
         self.db.commit()
         self.db.refresh(inbound)
+        _invalidate_hosts_cache()
         return inbound.hosts
 
     def bulk_replace_hosts(
@@ -397,6 +412,7 @@ class ProxyInboundRepository:
 
         self.db.flush()
         self.db.refresh(inbound)
+        _invalidate_hosts_cache()
         return inbound.hosts, list(affected_services.values())
 
     def remove_all_hosts(self, inbound_tag: str) -> List[Service]:
@@ -415,6 +431,7 @@ class ProxyInboundRepository:
             self.db.delete(host)
 
         self.db.flush()
+        _invalidate_hosts_cache()
         return list(affected_services.values())
 
     def disable_hosts(self, inbound_tag: str) -> List[Service]:
@@ -432,6 +449,7 @@ class ProxyInboundRepository:
                     affected_services[link.service.id] = link.service
                 self.db.delete(link)
         self.db.flush()
+        _invalidate_hosts_cache()
         return list(affected_services.values())
 
     # endregion
@@ -474,6 +492,7 @@ def update_hosts(
                     users_to_refresh[user.id] = user
 
     db.commit()
+    _invalidate_hosts_cache()
     return hosts, list(users_to_refresh.values())
 
 
@@ -544,6 +563,7 @@ class ServiceRepository:
                         sort=sort_value,
                     )
                 )
+        _invalidate_hosts_cache()
 
     def assign_admins(self, service: Service, admin_ids: Iterable[int]) -> None:
         admin_ids = list(dict.fromkeys(admin_ids))
@@ -788,6 +808,7 @@ class ServiceRepository:
 
         self.db.commit()
         self.db.refresh(service)
+        _invalidate_hosts_cache()
         return service
 
     def update(
@@ -824,6 +845,7 @@ class ServiceRepository:
         self.db.commit()
         self.db.refresh(service)
 
+        _invalidate_hosts_cache()
         return service, allowed_before, allowed_after
 
     def remove(
@@ -860,6 +882,7 @@ class ServiceRepository:
 
         self.db.delete(service)
         self.db.commit()
+        _invalidate_hosts_cache()
         return deleted_users, transferred_users
 
     def reset_usage(self, service: Service) -> Service:

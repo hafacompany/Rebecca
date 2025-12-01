@@ -257,45 +257,7 @@ def process_inbounds_and_tags(
     from app.runtime import xray
     service_id = extra_data.get("service_id")
 
-    def _select_host_map(service_id_value):
-        """
-        Get host map for a specific service_id from cache.
-        If service_id is None (no service), returns hosts not assigned to any service.
-        Always ensures cache is populated before returning.
-        """
-        if not hasattr(xray, "service_hosts_cache"):
-            xray.service_hosts_cache = {}
-        
-        if not xray.service_hosts_cache:
-            xray.hosts.update()
-        
-        host_map = xray.service_hosts_cache.get(service_id_value)
-        
-        if service_id_value is None:
-            xray.hosts.update()
-            
-            all_hosts = xray.hosts
-            host_map = {}
-            for tag in xray.config.inbounds_by_tag.keys():
-                host_map[tag] = all_hosts.get(tag, [])
-            
-            xray.service_hosts_cache[None] = host_map
-        else:
-            if not host_map:
-                xray.hosts.update()
-                host_map = xray.service_hosts_cache.get(service_id_value)
-        
-        if not host_map:
-            host_map = {}
-        
-        all_tags = set(xray.config.inbounds_by_tag.keys())
-        for tag in all_tags:
-            if tag not in host_map:
-                host_map[tag] = []
-        
-        return host_map
-
-    host_map = _select_host_map(service_id)
+    host_map = xray.get_service_host_map(service_id)
     inbound_index = {
         tag: index for index, tag in enumerate(xray.config.inbounds_by_tag.keys())
     }

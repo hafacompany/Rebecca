@@ -17,6 +17,7 @@ def restart_xray_and_invalidate_cache(startup_config=None):
     
     xray.core.restart(startup_config)
     
+    xray.invalidate_service_hosts_cache()
     xray.hosts.update()
     
     for node_id, node in list(xray.nodes.items()):
