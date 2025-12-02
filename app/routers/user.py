@@ -13,6 +13,7 @@ from app.models.user import (
     BulkUsersActionRequest,
     UserCreate,
     UserModify,
+    UserServiceCreate,
     UserResponse,
     UsersResponse,
     UserStatus,
@@ -30,47 +31,146 @@ xray = runtime.xray
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
 
-@router.post("/user", response_model=UserResponse, responses={400: responses._400, 409: responses._409})
+def _ensure_service_visibility(service, admin: Admin):
+    if admin.role in (AdminRole.sudo, AdminRole.full_access):
+        return
+    if admin.id is None or admin.id not in service.admin_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You're not allowed")
+
+
+def _ensure_flow_permission(admin: Admin, has_flow: bool) -> None:
+    if not has_flow:
+        return
+    if admin.role in (AdminRole.sudo, AdminRole.full_access):
+        return
+    if getattr(admin.permissions, "users", None) and getattr(admin.permissions.users, "set_flow", False):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You're not allowed to set user flow.",
+    )
+
+
+def _ensure_custom_key_permission(admin: Admin, has_key: bool) -> None:
+    if not has_key:
+        return
+    if admin.role in (AdminRole.sudo, AdminRole.full_access):
+        return
+    if getattr(admin.permissions, "users", None) and getattr(admin.permissions.users, "allow_custom_key", False):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You're not allowed to set a custom credential key.",
+    )
+
+
+@router.post("/user", response_model=UserResponse, status_code=status.HTTP_201_CREATED, responses={400: responses._400, 409: responses._409})
+@router.post("/v2/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED, responses={400: responses._400, 409: responses._409})
 def add_user(
-    new_user: UserCreate,
+    payload: dict,
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.require_active),
 ):
     """
-    Add a new user
-
-    - **username**: 3 to 32 characters, can include a-z, 0-9, and underscores.
-    - **status**: User's status, defaults to `active`. Special rules if `on_hold`.
-    - **expire**: UTC timestamp for account expiration. Use `0` for unlimited.
-    - **data_limit**: Max data usage in bytes (e.g., `1073741824` for 1GB). `0` means unlimited.
-    - **data_limit_reset_strategy**: Defines how/if data limit resets. `no_reset` means it never resets.
-    - **proxies**: Dictionary of protocol settings (e.g., `vmess`, `vless`).
-    - **inbounds**: Dictionary of protocol tags to specify inbound connections.
-    - **note**: Optional text field for additional user information or notes.
-    - **on_hold_timeout**: UTC timestamp when `on_hold` status should start or end.
-    - **on_hold_expire_duration**: Duration (in seconds) for how long the user should stay in `on_hold` status.
-    - **next_plan**: Next user plan (resets after use).
+    Add a new user (service mode if service_id provided, otherwise no-service legacy mode).
     """
 
-    # TODO expire should be datetime instead of timestamp
-
     admin.ensure_user_permission(UserPermission.create)
-    admin.ensure_user_constraints(
-        status_value=new_user.status.value if new_user.status else None,
-        data_limit=new_user.data_limit,
-        expire=new_user.expire,
-        next_plan=new_user.next_plan.model_dump() if new_user.next_plan else None,
-    )
 
-    for proxy_type in new_user.proxies:
-        if not xray.config.inbounds_by_protocol.get(proxy_type):
+    # Normalize service_id=0 to None to allow "no service" creation
+    if payload.get("service_id") == 0:
+        payload["service_id"] = None
+
+    # Service mode ----------------------------------------------------------
+    if payload.get("service_id") is not None:
+        try:
+            service_payload = UserServiceCreate.model_validate(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+        _ensure_flow_permission(admin, bool(service_payload.flow))
+        _ensure_custom_key_permission(admin, bool(service_payload.credential_key))
+
+        service = crud.get_service(db, service_payload.service_id)
+        if not service:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+
+        _ensure_service_visibility(service, admin)
+
+        db_admin = crud.get_admin(db, admin.username)
+        if not db_admin:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
+
+        allowed_inbounds = crud.get_service_allowed_inbounds(service)
+        if not allowed_inbounds or not any(allowed_inbounds.values()):
             raise HTTPException(
-                status_code=400,
-                detail=f"Protocol {proxy_type} is disabled on your server",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Service does not have any active hosts",
             )
 
+        proxies_payload = {proxy_type.value: {} for proxy_type in allowed_inbounds.keys()}
+        inbounds_payload = {
+            proxy_type.value: sorted(list(tags))
+            for proxy_type, tags in allowed_inbounds.items()
+        }
+
+        user_payload = service_payload.model_dump(exclude={"service_id"}, exclude_none=True)
+        user_payload["proxies"] = proxies_payload
+        user_payload["inbounds"] = inbounds_payload
+
+        try:
+            new_user = UserCreate.model_validate(user_payload)
+            admin.ensure_user_constraints(
+                status_value=new_user.status.value if new_user.status else None,
+                data_limit=new_user.data_limit,
+                expire=new_user.expire,
+                next_plan=new_user.next_plan.model_dump() if new_user.next_plan else None,
+            )
+            _ensure_custom_key_permission(admin, bool(new_user.credential_key))
+            ensure_user_credential_key(new_user)
+            dbuser = crud.create_user(
+                db,
+                new_user,
+                admin=db_admin,
+                service=service,
+            )
+        except UsersLimitReachedError as exc:
+            report.admin_users_limit_reached(admin, exc.limit, exc.current_active)
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="User already exists")
+
+        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+        user = UserResponse.model_validate(dbuser)
+        report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
+        logger.info(f'New user "{dbuser.username}" added via service {service.name}')
+        return user
+
+    # No-service mode -------------------------------------------------------
     try:
+        new_user = UserCreate.model_validate(payload)
+        admin.ensure_user_constraints(
+            status_value=new_user.status.value if new_user.status else None,
+            data_limit=new_user.data_limit,
+            expire=new_user.expire,
+            next_plan=new_user.next_plan.model_dump() if new_user.next_plan else None,
+        )
+        _ensure_flow_permission(admin, bool(new_user.flow))
+        _ensure_custom_key_permission(admin, bool(new_user.credential_key))
+
+        for proxy_type in new_user.proxies:
+            if not xray.config.inbounds_by_protocol.get(proxy_type):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Protocol {proxy_type} is disabled on your server",
+                )
+
         ensure_user_credential_key(new_user)
         dbuser = crud.create_user(
             db, new_user, admin=crud.get_admin(db, admin.username)
@@ -100,6 +200,7 @@ def get_user(dbuser: UserResponse = Depends(get_validated_user)):
 
 
 @router.put("/user/{username}", response_model=UserResponse, responses={400: responses._400, 403: responses._403, 404: responses._404})
+@router.put("/v2/users/{username}", response_model=UserResponse, responses={400: responses._400, 403: responses._403, 404: responses._404})
 def modify_user(
     modified_user: UserModify,
     bg: BackgroundTasks,

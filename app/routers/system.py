@@ -301,6 +301,14 @@ def generate_vless_encryption_keys(
 ):
     """Run `xray vlessenc` to generate authentication/encryption suggestions."""
 
+    def _fallback_auths() -> dict:
+        # Minimal fallback so UI remains usable even if xray binary is missing or output can't be parsed.
+        return {
+            "auths": [
+                {"label": "none", "encryption": "none", "decryption": "none"},
+            ]
+        }
+
     try:
         process = subprocess.run(
             [XRAY_EXECUTABLE_PATH, "vlessenc"],
@@ -308,18 +316,19 @@ def generate_vless_encryption_keys(
             text=True,
             check=True,
         )
-    except FileNotFoundError as exc:  # pragma: no cover - depends on host setup
-        raise HTTPException(status_code=500, detail="Xray binary not found") from exc
+    except FileNotFoundError:  # pragma: no cover - depends on host setup
+        return _fallback_auths()
     except subprocess.CalledProcessError as exc:  # pragma: no cover - defensive
-        detail = exc.stderr.strip() or exc.stdout.strip() or "Failed to run vlessenc"
-        raise HTTPException(status_code=500, detail=detail) from exc
+        detail = exc.stderr.strip() or exc.stdout.strip() or ""
+        logger.warning("vlessenc failed: %s", detail or exc)
+        return _fallback_auths()
 
     raw_output = process.stdout.strip()
     auths = _parse_vlessenc_output(raw_output)
 
     if not auths:
         logger.warning("Unable to parse vlessenc output: %s", raw_output or "<empty>")
-        raise HTTPException(status_code=500, detail="Unable to parse vlessenc output")
+        return _fallback_auths()
 
     return {"auths": auths}
 

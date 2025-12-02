@@ -10,7 +10,6 @@ from . import (
     user,
     home,
     service_v2,
-    user_v2,
     settings,
     myaccount,
 )
@@ -28,7 +27,6 @@ routers = [
     user.router,
     home.router,
     service_v2.router,
-    user_v2.router,
     settings.router,
     myaccount.router,
 ]

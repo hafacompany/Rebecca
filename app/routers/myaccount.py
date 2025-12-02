@@ -87,8 +87,12 @@ def get_myaccount(
     if not dbadmin:
         raise HTTPException(status_code=404, detail="Admin not found")
 
-    # Reuse the same date validation defaults as usage endpoints
-    start_dt, end_dt = validate_dates(start, end)
+    # Default to the last 7 days when no range is provided to keep responses fast
+    if not start and not end:
+        end_dt = datetime.utcnow()
+        start_dt = end_dt - timedelta(days=7)
+    else:
+        start_dt, end_dt = validate_dates(start, end)
     used_traffic = int(dbadmin.users_usage or 0)
     data_limit = dbadmin.data_limit
     remaining_data: Optional[int]
@@ -258,7 +262,11 @@ def get_myaccount_nodes(
     if not dbadmin:
         raise HTTPException(status_code=404, detail="Admin not found")
 
-    start_dt, end_dt = validate_dates(start, end)
+    if not start and not end:
+        end_dt = datetime.utcnow()
+        start_dt = end_dt - timedelta(days=7)
+    else:
+        start_dt, end_dt = validate_dates(start, end)
     per_node_usage = crud.get_admin_usage_by_nodes(db, dbadmin, start_dt, end_dt)
 
     return {

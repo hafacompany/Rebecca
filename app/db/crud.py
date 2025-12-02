@@ -1460,6 +1460,7 @@ def get_users(db: Session,
     query = db.query(User)
 
     # Filters ----------------------------------------------------------------
+    query = query.filter(User.status != UserStatus.deleted)
     query = _apply_advanced_user_filters(query, advanced_filters, now)
 
     if search:
@@ -1498,7 +1499,10 @@ def get_users(db: Session,
             query = query.filter(User.data_limit_reset_strategy == reset_strategy)
 
     if admin:
-        query = query.filter(User.admin == admin)
+        if admin.id is not None:
+            query = query.filter(User.admin_id == admin.id)
+        else:
+            query = query.filter(User.admin == admin)
 
     if admins:
         query = query.filter(User.admin.has(Admin.username.in_(admins)))
