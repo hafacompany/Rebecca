@@ -111,6 +111,8 @@ export type UserCreateWithService = Pick<
   auto_delete_in_days?: number | null;
   next_plan?: NextPlan | null;
   credential_key?: string;
+  proxies?: ProxyType;
+  inbounds?: UserInbounds;
 };
 
 export type UserApi = {

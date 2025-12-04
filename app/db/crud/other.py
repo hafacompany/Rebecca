@@ -157,7 +157,7 @@ class ServiceRepository:
         if not admin or admin.id is None or service.id is None:
             return
 
-        exists = (
+        link_exists = (
             self.db.query(AdminServiceLink)
             .filter(
                 AdminServiceLink.admin_id == admin.id,
@@ -165,7 +165,7 @@ class ServiceRepository:
             )
             .first()
         )
-        if exists:
+        if link_exists:
             return
 
         self.db.add(AdminServiceLink(admin_id=admin.id, service_id=service.id))
@@ -260,10 +260,12 @@ class ServiceRepository:
         dbuser.edit_at = datetime.now(timezone.utc)
 
     def refresh_users(self, service: Service, allowed_inbounds: Optional[Dict[ProxyTypes, Set[str]]] = None) -> List[User]:
-        if allowed_inbounds is None: allowed_inbounds = self.compute_allowed_inbounds(service)
+        if allowed_inbounds is None:
+            allowed_inbounds = self.compute_allowed_inbounds(service)
         updated_users: List[User] = []
         for user in service.users:
-            if user.status == UserStatus.deleted: continue
+            if user.status == UserStatus.deleted:
+                continue
             self.apply_service_to_user(user, service, allowed_inbounds)
             updated_users.append(user)
         self.db.flush()
@@ -292,13 +294,16 @@ class ServiceRepository:
     ) -> Dict[str, Union[List[Service], int]]:
         query = self.db.query(Service)
 
-        if name: query = query.filter(Service.name.ilike(f"%{name}%"))
+        if name:
+            query = query.filter(Service.name.ilike(f"%{name}%"))
         if admin and admin.role not in (AdminRole.sudo, AdminRole.full_access):
             query = query.join(Service.admin_links).filter(AdminServiceLink.admin_id == admin.id)
         total = query.count()
         query = query.order_by(Service.created_at.desc())
-        if offset: query = query.offset(offset)
-        if limit: query = query.limit(limit)
+        if offset:
+            query = query.offset(offset)
+        if limit:
+            query = query.limit(limit)
 
         services = query.all()
 

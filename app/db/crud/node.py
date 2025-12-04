@@ -183,10 +183,14 @@ def remove_node(db: Session, dbnode: Node) -> Node:
 
 def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
     """Updates an existing node with new information."""
-    if modify.name is not None: dbnode.name = modify.name
-    if modify.address is not None: dbnode.address = modify.address
-    if modify.port is not None: dbnode.port = modify.port
-    if modify.api_port is not None: dbnode.api_port = modify.api_port
+    if modify.name is not None:
+        dbnode.name = modify.name
+    if modify.address is not None:
+        dbnode.address = modify.address
+    if modify.port is not None:
+        dbnode.port = modify.port
+    if modify.api_port is not None:
+        dbnode.api_port = modify.api_port
     if modify.status is not None:
         if modify.status is NodeStatus.disabled:
             dbnode.status, dbnode.xray_version, dbnode.message = modify.status, None, None
@@ -196,16 +200,19 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
             dbnode.status = NodeStatus.connecting
     elif dbnode.status not in {NodeStatus.disabled, NodeStatus.limited}:
         dbnode.status = NodeStatus.connecting
-    if modify.usage_coefficient is not None: dbnode.usage_coefficient = modify.usage_coefficient
+    if modify.usage_coefficient is not None:
+        dbnode.usage_coefficient = modify.usage_coefficient
     data_limit_updated = False
     if modify.data_limit is not None:
         dbnode.data_limit, data_limit_updated = modify.data_limit, True
     if getattr(modify, "use_nobetci", None) is not None:
         dbnode.use_nobetci = bool(modify.use_nobetci)
-        if not dbnode.use_nobetci: dbnode.nobetci_port = None
+        if not dbnode.use_nobetci:
+            dbnode.nobetci_port = None
     if getattr(modify, "nobetci_port", None) is not None:
         dbnode.nobetci_port = modify.nobetci_port or None
-        if dbnode.nobetci_port and not dbnode.use_nobetci: dbnode.use_nobetci = True
+        if dbnode.nobetci_port and not dbnode.use_nobetci:
+            dbnode.use_nobetci = True
     if data_limit_updated:
         usage_total = (dbnode.uplink or 0) + (dbnode.downlink or 0)
         if dbnode.data_limit is None or usage_total < dbnode.data_limit:
