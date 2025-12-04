@@ -3,82 +3,48 @@ Functions for managing proxy hosts, users, user templates, nodes, and administra
 """
 
 import logging
-import secrets
 import json
-from hashlib import sha256
-from copy import deepcopy
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal
-from types import SimpleNamespace
+from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
 
-import sqlalchemy as sa
-from sqlalchemy import and_, case, delete, exists, func, or_, inspect, select
+from sqlalchemy import and_, exists, func, or_, inspect
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from sqlalchemy.orm import Query, Session, joinedload, selectinload
 from sqlalchemy.sql.functions import coalesce
 from app.db.models import (
-    JWT,
-    TLS,
     Admin,
-    AdminServiceLink,
-    AdminUsageLogs,
-    AdminApiKey,
     NextPlan,
-    MasterNodeState,
-    Node,
-    NodeUsage,
     NodeUserUsage,
     Proxy,
-    ProxyHost,
     ProxyInbound,
     ProxyTypes,
     Service,
-    ServiceHostLink,
-    System,
     User,
     UserTemplate,
     UserUsageResetLogs,
-    XrayConfig,
-    excluded_inbounds_association,
-    template_inbounds_association,
 )
-from app.models.admin import AdminRole, AdminStatus
-from app.models.admin import AdminCreate, AdminModify, AdminPartialModify, ROLE_DEFAULT_PERMISSIONS
-from app.utils.xray_defaults import apply_log_paths, load_legacy_xray_config
-from .proxy import get_or_create_inbound
-from .other import _apply_service_to_user
+from .proxy import get_or_create_inbound, _apply_key_to_existing_proxies
+from .common import _is_record_changed_error, _ensure_user_deleted_status
+# _apply_service_to_user imported inside functions to avoid circular import
 from app.utils.credentials import (
     generate_key,
-    key_to_uuid,
-    normalize_key,
-    runtime_proxy_settings,
     serialize_proxy_settings,
     uuid_to_key,
     UUID_PROTOCOLS,
     PASSWORD_PROTOCOLS,
 )
-from app.models.node import GeoMode, NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
-from app.models.proxy import ProxyHost as ProxyHostModify, ProxySettings
-from xray_api.types.account import XTLSFlows
-from app.models.service import ServiceCreate, ServiceHostAssignment, ServiceModify
+from app.models.proxy import ProxySettings
 from app.models.user import (
     UserCreate,
     UserDataLimitResetStrategy,
     UserModify,
-    UserResponse,
     UserStatus,
-    UserUsageResponse,
 )
 from app.models.user_template import UserTemplateCreate, UserTemplateModify
 from config import (
-    SUB_PROFILE_TITLE,
-    SUB_SUPPORT_URL,
     USERS_AUTODELETE_DAYS,
-    XRAY_SUBSCRIPTION_PATH,
-    XRAY_SUBSCRIPTION_URL_PREFIX,
 )
 # MasterSettingsService not available in current project structure
 from app.db.exceptions import UsersLimitReachedError
@@ -749,6 +715,7 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None, service: Opt
         from app.db.crud.service import _service_allowed_inbounds
         from app.db.crud.service import _ensure_admin_service_link
         allowed = _service_allowed_inbounds(service)
+        from .other import _apply_service_to_user
         _apply_service_to_user(db, dbuser, service, allowed)
         _ensure_admin_service_link(db, admin, service)
     db.add(dbuser)
@@ -921,6 +888,7 @@ def update_user(db: Session, dbuser: User, modify: UserModify, *, service: Optio
             from app.db.crud.service import _service_allowed_inbounds
             allowed = _service_allowed_inbounds(service)
             dbuser.service = service
+            from .other import _apply_service_to_user
             _apply_service_to_user(db, dbuser, service, allowed)
             if admin:
                 from app.db.crud.service import _ensure_admin_service_link

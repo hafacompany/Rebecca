@@ -3,84 +3,35 @@ Functions for managing proxy hosts, users, user templates, nodes, and administra
 """
 
 import logging
-import secrets
-from hashlib import sha256
-from copy import deepcopy
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from enum import Enum
-import uuid
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal
-from types import SimpleNamespace
+from typing import Dict, Iterable, List, Optional, Set, Tuple, Union, Literal
 
-import sqlalchemy as sa
-from sqlalchemy import and_, case, delete, exists, func, or_, inspect, select
-from sqlalchemy.exc import DataError, IntegrityError, OperationalError
-from sqlalchemy.orm import Query, Session, joinedload, selectinload
-from sqlalchemy.sql.functions import coalesce
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 from app.db.models import (
-    JWT,
-    TLS,
     Admin,
     AdminServiceLink,
-    AdminUsageLogs,
-    AdminApiKey,
-    NextPlan,
-    MasterNodeState,
-    Node,
-    NodeUsage,
     NodeUserUsage,
     Proxy,
-    ProxyHost,
-    ProxyInbound,
     ProxyTypes,
     Service,
     ServiceHostLink,
-    System,
     User,
-    UserTemplate,
-    UserUsageResetLogs,
-    XrayConfig,
-    excluded_inbounds_association,
-    template_inbounds_association,
 )
 from app.models.admin import AdminRole, AdminStatus
-from app.models.admin import AdminCreate, AdminModify, AdminPartialModify, ROLE_DEFAULT_PERMISSIONS
-from app.utils.xray_defaults import apply_log_paths, load_legacy_xray_config
 from app.utils.credentials import (
-    generate_key,
-    key_to_uuid,
-    normalize_key,
-    runtime_proxy_settings,
     serialize_proxy_settings,
-    uuid_to_key,
-    UUID_PROTOCOLS,
-    PASSWORD_PROTOCOLS,
 )
-from app.models.node import GeoMode, NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
-from app.models.proxy import ProxyHost as ProxyHostModify, ProxySettings
+from app.models.proxy import ProxySettings
 from xray_api.types.account import XTLSFlows
 from app.models.service import ServiceCreate, ServiceHostAssignment, ServiceModify
 from app.models.user import (
-    UserCreate,
-    UserDataLimitResetStrategy,
-    UserModify,
-    UserResponse,
     UserStatus,
-    UserUsageResponse,
 )
-from app.models.user_template import UserTemplateCreate, UserTemplateModify
-from .usage import _get_usage_data, _get_usage_timeseries
-from .user import get_user_queryset, _apply_service_filter
-from config import (
-    SUB_PROFILE_TITLE,
-    SUB_SUPPORT_URL,
-    USERS_AUTODELETE_DAYS,
-    XRAY_SUBSCRIPTION_PATH,
-    XRAY_SUBSCRIPTION_URL_PREFIX,
-)
+# Imported inside functions to avoid circular import
+# from .usage import _get_usage_data, _get_usage_timeseries
+# from .user import get_user_queryset, _apply_service_filter
 # MasterSettingsService not available in current project structure
-from app.db.exceptions import UsersLimitReachedError
 from .proxy import get_or_create_inbound, _fetch_hosts_by_ids
 MASTER_NODE_NAME = "Master"
 
@@ -452,6 +403,7 @@ class ServiceRepository:
         end: datetime,
         granularity: str = "day",
     ) -> List[Dict[str, Union[datetime, int]]]:
+        from .usage import _get_usage_data
         return _get_usage_data(
             db=self.db,
             entity_type="service",
@@ -488,6 +440,7 @@ class ServiceRepository:
         end_aware = end.astimezone(timezone.utc) if end.tzinfo else end.replace(tzinfo=timezone.utc)
         tzinfo = start_aware.tzinfo or timezone.utc
         
+        from .usage import _get_usage_timeseries
         return _get_usage_timeseries(query, start_aware, end_aware, tzinfo, granularity, {}, False)
 
     def admin_usage(
@@ -556,6 +509,7 @@ def count_users(
     service_without_assignment: bool = False,
 ) -> int:
     """Return a lightweight count of users respecting admin/service filters."""
+    from .user import get_user_queryset, _apply_service_filter
     query = get_user_queryset(db, eager_load=False)
     if admin:
         query = query.filter(User.admin == admin)
