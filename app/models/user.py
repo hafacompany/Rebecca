@@ -19,7 +19,6 @@ from app.utils.credentials import (
 from xray_api.types.account import Account
 from app.utils.jwt import create_subscription_token
 from config import XRAY_SUBSCRIPTION_PATH, XRAY_SUBSCRIPTION_URL_PREFIX
-from enum import Enum
 
 # Fallback import to avoid deployment breakage when settings model isn't updated yet
 try:  # pragma: no cover

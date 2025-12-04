@@ -156,7 +156,7 @@ def get_user(db: Session, username: Optional[str] = None, user_id: Optional[int]
     """Retrieves a user by username or user ID. Uses Redis cache if available."""
     # Try Redis cache first
     try:
-        from app.redis.user_cache import get_cached_user
+        from app.redis.cache import get_cached_user
         cached_user = get_cached_user(username=username, user_id=user_id, db=db)
         if cached_user:
             # Refresh from DB to get latest relationships
@@ -171,7 +171,7 @@ def get_user(db: Session, username: Optional[str] = None, user_id: Optional[int]
             
             if db_user:
                 # Update cache with fresh data
-                from app.redis.user_cache import cache_user
+                from app.redis.cache import cache_user
                 cache_user(db_user)
                 return db_user
             return cached_user
@@ -191,7 +191,7 @@ def get_user(db: Session, username: Optional[str] = None, user_id: Optional[int]
     # Cache for next time
     if user:
         try:
-            from app.redis.user_cache import cache_user
+            from app.redis.cache import cache_user
             cache_user(user)
         except Exception as e:
             _logger.debug(f"Failed to cache user in Redis: {e}")
@@ -453,7 +453,7 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
     """Retrieves users based on various filters and options. Uses Redis cache if available."""
     # Try to get from Redis cache first
     try:
-        from app.redis.user_cache import get_all_users_from_cache
+        from app.redis.cache import get_all_users_from_cache
         from app.redis.client import get_redis
         from config import REDIS_ENABLED
         
@@ -599,7 +599,7 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
     
     # Cache users in Redis for future queries
     try:
-        from app.redis.user_cache import cache_user
+        from app.redis.cache import cache_user
         for user in users:
             cache_user(user)
     except Exception as e:
@@ -759,7 +759,7 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None, service: Opt
     
     # Cache user in Redis
     try:
-        from app.redis.user_cache import cache_user
+        from app.redis.cache import cache_user
         cache_user(dbuser)
     except Exception as e:
         _logger.warning(f"Failed to cache user in Redis: {e}")
@@ -777,7 +777,7 @@ def remove_user(db: Session, dbuser: User) -> User:
         db.commit()
         # Invalidate user from Redis cache
         try:
-            from app.redis.user_cache import invalidate_user_cache
+            from app.redis.cache import invalidate_user_cache
             invalidate_user_cache(username=dbuser.username, user_id=dbuser.id)
         except Exception as e:
             _logger.warning(f"Failed to invalidate user from Redis cache: {e}")
@@ -936,7 +936,7 @@ def update_user(db: Session, dbuser: User, modify: UserModify, *, service: Optio
     
     # Update user in Redis cache
     try:
-        from app.redis.user_cache import cache_user, invalidate_user_cache
+        from app.redis.cache import cache_user, invalidate_user_cache
         invalidate_user_cache(username=dbuser.username, user_id=dbuser.id)
         cache_user(dbuser)
     except Exception as e:

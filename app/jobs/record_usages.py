@@ -9,7 +9,7 @@ from sqlalchemy import and_, bindparam, func, insert, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.dml import Insert
 
-from app.runtime import scheduler, xray
+from app.runtime import logger, scheduler, xray
 from app.utils import report
 from app.db import GetDB
 from app.db.models import (
@@ -65,35 +65,59 @@ def record_user_stats(params: list, node_id: Union[int, None],
 
     created_at = datetime.fromisoformat(datetime.utcnow().strftime('%Y-%m-%dT%H:00:00'))
 
-    with GetDB() as db:
-        # make user usage row if doesn't exist
-        select_stmt = select(NodeUserUsage.user_id) \
-            .where(and_(NodeUserUsage.node_id == node_id, NodeUserUsage.created_at == created_at))
-        existings = [r[0] for r in db.execute(select_stmt).fetchall()]
-        uids_to_insert = set()
-
+    # Try to write to Redis first
+    from app.redis.cache import cache_user_usage_snapshot
+    from app.redis.client import get_redis
+    from app.redis.pending_backup import save_usage_snapshots_backup
+    
+    redis_client = get_redis()
+    if redis_client:
+        # Prepare snapshots for backup
+        user_snapshots = []
         for p in params:
             uid = int(p['uid'])
-            if uid in existings:
-                continue
-            uids_to_insert.add(uid)
+            value = int(p['value']) * consumption_factor
+            cache_user_usage_snapshot(uid, node_id, created_at, value)
+            user_snapshots.append({
+                'user_id': uid,
+                'node_id': node_id,
+                'created_at': created_at.isoformat(),
+                'used_traffic': value
+            })
+        
+        # Save backup to disk
+        save_usage_snapshots_backup(user_snapshots, [])
+    else:
+        # Fallback to direct DB write if Redis is not available
+        with GetDB() as db:
+            # make user usage row if doesn't exist
+            select_stmt = select(NodeUserUsage.user_id) \
+                .where(and_(NodeUserUsage.node_id == node_id, NodeUserUsage.created_at == created_at))
+            existings = [r[0] for r in db.execute(select_stmt).fetchall()]
+            uids_to_insert = set()
 
-        if uids_to_insert:
-            stmt = insert(NodeUserUsage).values(
-                user_id=bindparam('uid'),
-                created_at=created_at,
-                node_id=node_id,
-                used_traffic=0
-            )
-            safe_execute(db, stmt, [{'uid': uid} for uid in uids_to_insert])
+            for p in params:
+                uid = int(p['uid'])
+                if uid in existings:
+                    continue
+                uids_to_insert.add(uid)
 
-        # record
-        stmt = update(NodeUserUsage) \
-            .values(used_traffic=NodeUserUsage.used_traffic + bindparam('value') * consumption_factor) \
-            .where(and_(NodeUserUsage.user_id == bindparam('uid'),
-                        NodeUserUsage.node_id == node_id,
-                        NodeUserUsage.created_at == created_at))
-        safe_execute(db, stmt, params)
+            if uids_to_insert:
+                stmt = insert(NodeUserUsage).values(
+                    user_id=bindparam('uid'),
+                    created_at=created_at,
+                    node_id=node_id,
+                    used_traffic=0
+                )
+                safe_execute(db, stmt, [{'uid': uid} for uid in uids_to_insert])
+
+            # record
+            stmt = update(NodeUserUsage) \
+                .values(used_traffic=NodeUserUsage.used_traffic + bindparam('value') * consumption_factor) \
+                .where(and_(NodeUserUsage.user_id == bindparam('uid'),
+                            NodeUserUsage.node_id == node_id,
+                            NodeUserUsage.created_at == created_at))
+            safe_execute(db, stmt, params)
 
 
 def record_node_stats(params: dict, node_id: Union[int, None]):
@@ -109,25 +133,98 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
 
     status_change_payload = None
 
-    with GetDB() as db:
-        master_record = None
-        if node_id is None:
-            master_record = crud._ensure_master_state(db, for_update=True)
+    # Try to write to Redis first
+    from app.redis.cache import cache_node_usage_snapshot
+    from app.redis.client import get_redis
+    from app.redis.pending_backup import save_usage_snapshots_backup
+    
+    redis_client = get_redis()
+    if redis_client:
+        # Write to Redis
+        cache_node_usage_snapshot(node_id, created_at, total_up, total_down)
+        
+        # Save backup to disk
+        node_snapshots = [{
+            'node_id': node_id,
+            'created_at': created_at.isoformat(),
+            'uplink': total_up,
+            'downlink': total_down
+        }]
+        save_usage_snapshots_backup([], node_snapshots)
+        
+        # Still need to update node status in DB (this is critical for node management)
+        if node_id is not None and (total_up or total_down):
+            with GetDB() as db:
+                dbnode = db.query(Node).filter(Node.id == node_id).with_for_update().first()
+                if dbnode:
+                    dbnode.uplink = (dbnode.uplink or 0) + total_up
+                    dbnode.downlink = (dbnode.downlink or 0) + total_down
 
-        # make node usage row if doesn't exist
-        select_stmt = select(NodeUsage.node_id). \
-            where(and_(NodeUsage.node_id == node_id, NodeUsage.created_at == created_at))
-        notfound = db.execute(select_stmt).first() is None
-        if notfound:
-            stmt = insert(NodeUsage).values(created_at=created_at, node_id=node_id, uplink=0, downlink=0)
-            safe_execute(db, stmt)
+                    current_usage = (dbnode.uplink or 0) + (dbnode.downlink or 0)
+                    limit = dbnode.data_limit
 
-        # record
-        stmt = update(NodeUsage). \
-            values(uplink=NodeUsage.uplink + bindparam('up'), downlink=NodeUsage.downlink + bindparam('down')). \
-            where(and_(NodeUsage.node_id == node_id, NodeUsage.created_at == created_at))
+                    if limit is not None and current_usage >= limit:
+                        if dbnode.status != NodeStatus.limited:
+                            previous_status = dbnode.status
+                            dbnode.status = NodeStatus.limited
+                            dbnode.message = "Data limit reached"
+                            dbnode.xray_version = None
+                            dbnode.last_status_change = datetime.utcnow()
+                            limited_triggered = True
+                            status_change_payload = (NodeResponse.model_validate(dbnode), previous_status)
+                    else:
+                        if dbnode.status == NodeStatus.limited:
+                            previous_status = dbnode.status
+                            dbnode.status = NodeStatus.connecting
+                            dbnode.message = None
+                            dbnode.xray_version = None
+                            dbnode.last_status_change = datetime.utcnow()
+                            limit_cleared = True
+                            status_change_payload = (NodeResponse.model_validate(dbnode), previous_status)
 
-        safe_execute(db, stmt, params)
+                    db.commit()
+        elif node_id is None and (total_up or total_down):
+            with GetDB() as db:
+                master_record = crud._ensure_master_state(db, for_update=True)
+                master_record.uplink = (master_record.uplink or 0) + total_up
+                master_record.downlink = (master_record.downlink or 0) + total_down
+
+                limit = master_record.data_limit
+                current_usage = (master_record.uplink or 0) + (master_record.downlink or 0)
+
+                if limit is not None and current_usage >= limit:
+                    if master_record.status != NodeStatus.limited:
+                        master_record.status = NodeStatus.limited
+                        master_record.message = "Data limit reached"
+                        master_record.updated_at = datetime.utcnow()
+                else:
+                    if master_record.status == NodeStatus.limited:
+                        master_record.status = NodeStatus.connected
+                        master_record.message = None
+                        master_record.updated_at = datetime.utcnow()
+
+                db.commit()
+    else:
+        # Fallback to direct DB write if Redis is not available
+        with GetDB() as db:
+            master_record = None
+            if node_id is None:
+                master_record = crud._ensure_master_state(db, for_update=True)
+
+            # make node usage row if doesn't exist
+            select_stmt = select(NodeUsage.node_id). \
+                where(and_(NodeUsage.node_id == node_id, NodeUsage.created_at == created_at))
+            notfound = db.execute(select_stmt).first() is None
+            if notfound:
+                stmt = insert(NodeUsage).values(created_at=created_at, node_id=node_id, uplink=0, downlink=0)
+                safe_execute(db, stmt)
+
+            # record
+            stmt = update(NodeUsage). \
+                values(uplink=NodeUsage.uplink + bindparam('up'), downlink=NodeUsage.downlink + bindparam('down')). \
+                where(and_(NodeUsage.node_id == node_id, NodeUsage.created_at == created_at))
+
+            safe_execute(db, stmt, params)
 
         if node_id is not None and (total_up or total_down):
             dbnode = db.query(Node).filter(Node.id == node_id).with_for_update().first()
@@ -267,16 +364,36 @@ def record_user_usages():
     # record users usage
     admin_limit_events = []
     
-    from app.redis.user_cache import cache_user_usage_update
+    from app.redis.cache import cache_user_usage_update, warmup_user_usages
     from app.redis.client import get_redis
+    from app.redis.pending_backup import save_user_usage_backup, save_admin_usage_backup, save_service_usage_backup
     
     redis_client = get_redis()
     if redis_client:
         online_at = datetime.utcnow()
+        
+        # Prepare user usage updates for backup
+        user_usage_backup = []
         for usage in users_usage:
             user_id = int(usage['uid'])
             value = int(usage['value'])
             cache_user_usage_update(user_id, value, online_at)
+            user_usage_backup.append({
+                'user_id': user_id,
+                'used_traffic_delta': value,
+                'online_at': online_at.isoformat()
+            })
+            
+            # Warmup usage cache for this user when they become online
+            try:
+                warmup_user_usages(user_id)
+            except Exception as e:
+                logger.debug(f"Failed to warmup usage cache for user {user_id}: {e}")
+        
+        # Save backup to disk
+        save_user_usage_backup(user_usage_backup)
+        save_admin_usage_backup(admin_usage)
+        save_service_usage_backup(service_usage)
         
     else:
         with GetDB() as db:

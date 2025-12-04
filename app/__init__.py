@@ -119,6 +119,13 @@ if not SKIP_RUNTIME_INIT:
         if redis_client:
             logger.info("Redis is available, warming up caches in background...")
             
+            # Restore pending backups to Redis first
+            try:
+                from app.redis.pending_backup import restore_all_backups_to_redis
+                restore_all_backups_to_redis()
+            except Exception as e:
+                logger.warning(f"Failed to restore backups to Redis: {e}", exc_info=True)
+            
             def warmup_caches_async():
                 try:
                     total, cached = warmup_subscription_cache()
@@ -127,11 +134,19 @@ if not SKIP_RUNTIME_INIT:
                     logger.warning(f"Failed to warmup subscription cache: {e}", exc_info=True)
                 
                 try:
-                    from app.redis.user_cache import warmup_users_cache
+                    from app.redis.cache import warmup_users_cache
                     total, cached = warmup_users_cache()
                     logger.info(f"Users cache warmup completed: {cached}/{total} users cached")
                 except Exception as e:
                     logger.warning(f"Failed to warmup users cache: {e}", exc_info=True)
+                
+                # Warmup usage cache gradually (to avoid DB overload)
+                try:
+                    from app.redis.cache import warmup_all_usages_gradually
+                    total, cached = warmup_all_usages_gradually()
+                    logger.info(f"Usage cache warmup completed: {cached}/{total} records cached")
+                except Exception as e:
+                    logger.warning(f"Failed to warmup usage cache: {e}", exc_info=True)
             
             # Run warmup in background thread
             import threading

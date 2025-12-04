@@ -164,3 +164,6 @@ xray-core
 
 .ruff_cache/
 .DS_Store
+
+# Redis backup files
+data/redis_backup/

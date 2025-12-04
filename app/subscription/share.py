@@ -256,7 +256,6 @@ def process_inbounds_and_tags(
 ) -> Union[List, str]:
     from app.runtime import xray
     from app.services.data_access import get_service_host_map_cached
-    from app.services.data_access import get_service_host_map_cached
     service_id = extra_data.get("service_id")
 
     host_map = get_service_host_map_cached(service_id)

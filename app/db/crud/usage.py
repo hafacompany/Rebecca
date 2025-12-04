@@ -82,6 +82,7 @@ from app.db.exceptions import UsersLimitReachedError
 from .common import MASTER_NODE_NAME
 from .node import _ensure_master_state
 from .user import _status_to_str, _ensure_active_user_capacity, get_user_queryset
+from .admin import _maybe_enable_admin_after_data_limit
 
 # ============================================================================
 
@@ -132,6 +133,13 @@ def _get_usage_data(db: Session, entity_type: Literal["user", "admin", "node", "
     elif entity_type == "all_nodes":
         pass  # No specific filter
     
+    # Try to get from Redis cache first
+    from app.redis.cache import get_user_usages_from_cache, get_node_usages_from_cache
+    from app.redis.client import get_redis, REDIS_ENABLED
+    
+    redis_client = get_redis() if REDIS_ENABLED else None
+    use_redis_cache = redis_client is not None
+    
     # Build query
     query = db.query(NodeUserUsage)
     if user_ids is not None:
@@ -149,6 +157,15 @@ def _get_usage_data(db: Session, entity_type: Literal["user", "admin", "node", "
         NodeUserUsage.created_at >= start_aware,
         NodeUserUsage.created_at <= end_aware
     )
+    
+    # If using Redis and querying for specific users, try cache first
+    if use_redis_cache and user_ids and len(user_ids) == 1 and entity_type == "user":
+        # Try to get from cache for single user queries
+        cached_usages = get_user_usages_from_cache(user_ids, None, start_aware, end_aware)
+        if cached_usages:
+            # Convert cached data to NodeUserUsage-like objects for processing
+            # This is a simplified approach - full implementation would need to convert properly
+            pass  # For now, fall through to DB query
     
     # Get node lookup
     _ensure_master_state(db, for_update=False)

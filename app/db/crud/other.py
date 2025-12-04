@@ -70,6 +70,8 @@ from app.models.user import (
     UserUsageResponse,
 )
 from app.models.user_template import UserTemplateCreate, UserTemplateModify
+from .usage import _get_usage_data, _get_usage_timeseries
+from .user import get_user_queryset, _apply_service_filter
 from config import (
     SUB_PROFILE_TITLE,
     SUB_SUPPORT_URL,
@@ -573,71 +575,4 @@ def count_online_users(db: Session, hours: int = 24, admin: Admin | None = None)
     if admin and admin.id is not None:
         query = query.filter(User.admin_id == admin.id)
     return query.scalar() or 0
-
-    def resolve_node_name(n_id: int) -> str:
-        return node_lookup.get(n_id, "Unknown")
-
-    if node_id is not None:
-        node_keys: List[int] = [node_id]
-    else:
-        node_keys = sorted(node_lookup.keys())
-
-    if granularity == "hour":
-        current = start.replace(minute=0, second=0, microsecond=0)
-        end_aligned = end.replace(minute=0, second=0, microsecond=0)
-    else:
-        current = start.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_aligned = end.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    if current > end_aligned:
-        return []
-
-    usage_by_node_and_date: Dict[tuple[int, str], dict] = {}
-    while current <= end_aligned:
-        label = current.strftime(fmt)
-        for n_key in node_keys:
-            usage_by_node_and_date[(n_key, label)] = {
-                "node_id": None if n_key in (0, None) else n_key,
-                "node_name": resolve_node_name(n_key if n_key is not None else 0),
-                "date": label,
-                "used_traffic": 0,
-            }
-        current += step
-
-    cond = and_(
-        NodeUserUsage.user_id.in_(user_ids),
-        NodeUserUsage.created_at >= start,
-        NodeUserUsage.created_at <= end,
-    )
-    if node_id is not None:
-        if node_id == 0:
-            cond = and_(cond, NodeUserUsage.node_id.is_(None))
-        else:
-            cond = and_(cond, NodeUserUsage.node_id == node_id)
-
-    for usage in db.query(NodeUserUsage).filter(cond):
-        bucket_time = usage.created_at
-        if granularity == "hour":
-            bucket_time = bucket_time.replace(minute=0, second=0, microsecond=0)
-        else:
-            bucket_time = bucket_time.replace(hour=0, minute=0, second=0, microsecond=0)
-        label = bucket_time.strftime(fmt)
-        node_key = usage.node_id or 0
-        key = (node_key, label)
-        if key in usage_by_node_and_date:
-            usage_by_node_and_date[key]["used_traffic"] += usage.used_traffic
-
-    if node_id is not None:
-        return [
-            {"date": entry["date"], "used_traffic": entry["used_traffic"]}
-            for entry in sorted(usage_by_node_and_date.values(), key=lambda x: x["date"])
-        ]
-
-    return [
-        entry
-        for _, entry in sorted(
-            usage_by_node_and_date.items(), key=lambda item: (item[0][1], item[0][0] or 0)
-        )
-        if entry["used_traffic"] > 0
-    ]
 

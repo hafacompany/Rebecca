@@ -6,17 +6,21 @@ Reads pending usage updates from Redis and applies them to the database.
 import logging
 from datetime import datetime, timezone
 from collections import defaultdict
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 
 from app.runtime import logger, scheduler
 from app.db import GetDB
 from app.db.models import User, Admin
-from app.redis.user_cache import get_pending_usage_updates
+from app.redis.cache import (
+    get_pending_usage_updates,
+    get_pending_usage_snapshots,
+    REDIS_KEY_PREFIX_ADMIN_USAGE_PENDING,
+    REDIS_KEY_PREFIX_SERVICE_USAGE_PENDING,
+    REDIS_KEY_PREFIX_ADMIN_SERVICE_USAGE_PENDING
+)
 from app.redis.client import get_redis
 from config import REDIS_SYNC_INTERVAL, REDIS_ENABLED
-from sqlalchemy import update, bindparam
-
-logger = logging.getLogger(__name__)
+from sqlalchemy import update, bindparam, insert
 
 
 def sync_usage_updates_to_db():
@@ -39,7 +43,7 @@ def sync_usage_updates_to_db():
             return
         
         # Group updates by user_id
-        user_updates: Dict[int, Dict[str, any]] = defaultdict(lambda: {
+        user_updates: Dict[int, Dict[str, Any]] = defaultdict(lambda: {
             'used_traffic_delta': 0,
             'online_at': None,
         })
@@ -93,7 +97,7 @@ def sync_usage_updates_to_db():
                 usage['online_at'] = user_updates[user_id]['online_at'] or datetime.utcnow()
             
             # Execute batch update
-            db.execute(stmt, users_usage)
+            db.execute(stmt, users_usage, execution_options={"synchronize_session": None})
             
             # Update admin usage statistics
             user_ids = [u['uid'] for u in users_usage]
@@ -134,15 +138,210 @@ def sync_usage_updates_to_db():
                         lifetime_usage=Admin.lifetime_usage + bindparam("value"),
                     )
                 )
-                db.execute(admin_update_stmt, admin_data)
+                db.execute(admin_update_stmt, admin_data, execution_options={"synchronize_session": None})
             
-            # Update service usage (if needed)            
+            # Update service usage (if needed)
+            # TODO: Add service usage updates if service usage tracking is needed
+            
             db.commit()
             
             logger.info(f"Synced {len(users_usage)} user usage updates from Redis to database")
             
+            # Clear backup after successful sync
+            from app.redis.pending_backup import clear_user_usage_backup
+            clear_user_usage_backup()
+        
+        # Sync admin usage updates
+        admin_synced = _sync_admin_usage_updates(redis_client)
+        if admin_synced:
+            from app.redis.pending_backup import clear_admin_usage_backup
+            clear_admin_usage_backup()
+        
+        # Sync service usage updates
+        service_synced = _sync_service_usage_updates(redis_client)
+        if service_synced:
+            from app.redis.pending_backup import clear_service_usage_backup
+            clear_service_usage_backup()
+        
+        # Sync usage snapshots (user_node_usage and node_usage)
+        snapshots_synced = _sync_usage_snapshots(redis_client)
+        if snapshots_synced:
+            from app.redis.pending_backup import clear_usage_snapshots_backup
+            clear_usage_snapshots_backup()
+            
     except Exception as e:
         logger.error(f"Failed to sync usage updates from Redis to database: {e}", exc_info=True)
+
+
+def _sync_admin_usage_updates(redis_client):
+    """Sync admin usage updates from Redis to DB. Returns True if synced successfully."""
+    try:
+        from app.db.models import Admin
+        import json
+        
+        admin_updates = defaultdict(int)
+        pattern = f"{REDIS_KEY_PREFIX_ADMIN_USAGE_PENDING}*"
+        
+        for key in redis_client.scan_iter(match=pattern):
+            admin_id = int(key.split(':')[-1])
+            while True:
+                update_json = redis_client.rpop(key)
+                if not update_json:
+                    break
+                try:
+                    update_data = json.loads(update_json)
+                    admin_updates[admin_id] += update_data.get('value', 0)
+                except json.JSONDecodeError:
+                    continue
+        
+        if admin_updates:
+            with GetDB() as db:
+                admin_data = [{"b_admin_id": admin_id, "value": value} for admin_id, value in admin_updates.items()]
+                admin_update_stmt = (
+                    update(Admin)
+                    .where(Admin.id == bindparam("b_admin_id"))
+                    .values(
+                        users_usage=Admin.users_usage + bindparam("value"),
+                        lifetime_usage=Admin.lifetime_usage + bindparam("value"),
+                    )
+                )
+                db.execute(admin_update_stmt, admin_data, execution_options={"synchronize_session": None})
+                db.commit()
+                logger.info(f"Synced {len(admin_updates)} admin usage updates from Redis to database")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to sync admin usage updates: {e}", exc_info=True)
+    return False
+
+
+def _sync_service_usage_updates(redis_client):
+    """Sync service usage updates from Redis to DB. Returns True if synced successfully."""
+    try:
+        from app.db.models import Service
+        import json
+        
+        service_updates = defaultdict(int)
+        pattern = f"{REDIS_KEY_PREFIX_SERVICE_USAGE_PENDING}*"
+        
+        for key in redis_client.scan_iter(match=pattern):
+            service_id = int(key.split(':')[-1])
+            while True:
+                update_json = redis_client.rpop(key)
+                if not update_json:
+                    break
+                try:
+                    update_data = json.loads(update_json)
+                    service_updates[service_id] += update_data.get('value', 0)
+                except json.JSONDecodeError:
+                    continue
+        
+        if service_updates:
+            with GetDB() as db:
+                service_data = [{"b_service_id": service_id, "value": value} for service_id, value in service_updates.items()]
+                service_update_stmt = (
+                    update(Service)
+                    .where(Service.id == bindparam("b_service_id"))
+                    .values(
+                        users_usage=Service.users_usage + bindparam("value"),
+                    )
+                )
+                db.execute(service_update_stmt, service_data, execution_options={"synchronize_session": None})
+                db.commit()
+                logger.info(f"Synced {len(service_updates)} service usage updates from Redis to database")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to sync service usage updates: {e}", exc_info=True)
+    return False
+
+
+def _sync_usage_snapshots(redis_client):
+    """Sync usage snapshots (user_node_usage and node_usage) from Redis to DB. Returns True if synced successfully."""
+    try:
+        from app.db.models import NodeUserUsage, NodeUsage
+        from datetime import datetime
+        import json
+        
+        user_snapshots, node_snapshots = get_pending_usage_snapshots()
+        
+        if user_snapshots or node_snapshots:
+            with GetDB() as db:
+                # Group user snapshots by (user_id, node_id, created_at)
+                user_snapshot_groups = defaultdict(int)
+                for snapshot in user_snapshots:
+                    user_id = snapshot.get('user_id')
+                    node_id = snapshot.get('node_id')
+                    created_at_str = snapshot.get('created_at')
+                    used_traffic = snapshot.get('used_traffic', 0)
+                    
+                    if user_id and created_at_str:
+                        try:
+                            created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                            key = (user_id, node_id, created_at)
+                            user_snapshot_groups[key] += used_traffic
+                        except Exception:
+                            continue
+                
+                # Insert/update user_node_usage
+                for (user_id, node_id, created_at), total_traffic in user_snapshot_groups.items():
+                    # Check if record exists
+                    existing = db.query(NodeUserUsage).filter(
+                        NodeUserUsage.user_id == user_id,
+                        NodeUserUsage.node_id == node_id,
+                        NodeUserUsage.created_at == created_at
+                    ).first()
+                    
+                    if existing:
+                        existing.used_traffic = (existing.used_traffic or 0) + total_traffic
+                    else:
+                        db.add(NodeUserUsage(
+                            user_id=user_id,
+                            node_id=node_id,
+                            created_at=created_at,
+                            used_traffic=total_traffic
+                        ))
+                
+                # Group node snapshots by (node_id, created_at)
+                node_snapshot_groups = defaultdict(lambda: {'uplink': 0, 'downlink': 0})
+                for snapshot in node_snapshots:
+                    node_id = snapshot.get('node_id')
+                    created_at_str = snapshot.get('created_at')
+                    uplink = snapshot.get('uplink', 0)
+                    downlink = snapshot.get('downlink', 0)
+                    
+                    if created_at_str:
+                        try:
+                            created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                            key = (node_id, created_at)
+                            node_snapshot_groups[key]['uplink'] += uplink
+                            node_snapshot_groups[key]['downlink'] += downlink
+                        except Exception:
+                            continue
+                
+                # Insert/update node_usage
+                for (node_id, created_at), traffic in node_snapshot_groups.items():
+                    # Check if record exists
+                    existing = db.query(NodeUsage).filter(
+                        NodeUsage.node_id == node_id,
+                        NodeUsage.created_at == created_at
+                    ).first()
+                    
+                    if existing:
+                        existing.uplink = (existing.uplink or 0) + traffic['uplink']
+                        existing.downlink = (existing.downlink or 0) + traffic['downlink']
+                    else:
+                        db.add(NodeUsage(
+                            node_id=node_id,
+                            created_at=created_at,
+                            uplink=traffic['uplink'],
+                            downlink=traffic['downlink']
+                        ))
+                
+                db.commit()
+                logger.info(f"Synced {len(user_snapshot_groups)} user usage snapshots and {len(node_snapshot_groups)} node usage snapshots from Redis to database")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to sync usage snapshots: {e}", exc_info=True)
+    return False
 
 
 if REDIS_ENABLED:
