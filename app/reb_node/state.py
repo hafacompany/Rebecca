@@ -165,14 +165,19 @@ def rebuild_service_hosts_cache() -> None:
                 logger.warning(f"Failed to update Redis cache for service hosts: {e}")
 
 
-def get_service_host_map(service_id: Optional[int]) -> Dict[str, list]:
+def get_service_host_map(service_id: Optional[int], force_rebuild: bool = False) -> Dict[str, list]:
     """
     Return host map for the given service_id with TTL-based refresh.
+    
+    Args:
+        service_id: Service ID to get host map for
+        force_rebuild: If True, force rebuild cache even if TTL hasn't expired
     """
     now = time.time()
     with _hosts_cache_lock:
         if (
-            not service_hosts_cache
+            force_rebuild
+            or not service_hosts_cache
             or service_hosts_cache_ts is None
             or now - service_hosts_cache_ts > HOSTS_CACHE_TTL
         ):

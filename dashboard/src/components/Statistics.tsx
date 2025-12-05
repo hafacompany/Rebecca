@@ -522,6 +522,46 @@ const SystemOverviewCard: FC<{
             </Text>
           </Box>
         )}
+        {data.last_telegram_error && (
+          <Box
+            mt={4}
+            p={4}
+            borderRadius="md"
+            bg="orange.50"
+            borderWidth="1px"
+            borderColor="orange.200"
+            _dark={{
+              bg: "rgba(237, 137, 54, 0.1)",
+              borderColor: "orange.800",
+            }}
+          >
+            <HStack spacing={2} mb={2} alignItems="center" justifyContent="space-between">
+              <Text fontSize="sm" fontWeight="semibold" color="orange.600" _dark={{ color: "orange.400" }}>
+                {t("telegramError", "Telegram Error")}:
+              </Text>
+              <Button
+                size="xs"
+                colorScheme="orange"
+                variant="outline"
+                onClick={() => {
+                  window.location.href = "/integrations";
+                }}
+              >
+                {t("goToTelegramSettings", "Go to Telegram Settings")}
+              </Button>
+            </HStack>
+            <Text
+              fontSize="sm"
+              color="orange.700"
+              fontFamily="mono"
+              whiteSpace="pre-wrap"
+              wordBreak="break-word"
+              _dark={{ color: "orange.300" }}
+            >
+              {data.last_telegram_error}
+            </Text>
+          </Box>
+        )}
       </Stack>
     </Card>
   );

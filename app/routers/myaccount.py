@@ -59,7 +59,8 @@ class ApiKeyDeletePayload(BaseModel):
 
 
 def _has_self_permission(admin: Admin, key: str) -> bool:
-    if admin.role in (AdminRole.sudo, AdminRole.full_access, AdminRole.standard):
+    # Full access admins always have these permissions
+    if admin.role == AdminRole.full_access:
         return True
     perms = getattr(admin, "permissions", None)
     if not perms:

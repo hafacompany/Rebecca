@@ -256,11 +256,21 @@ def process_inbounds_and_tags(
 ) -> Union[List, str]:
     from app.runtime import xray
     from app.services.data_access import get_service_host_map_cached
+    from app.db import GetDB
+    from app.db import crud
+    from app.reb_node.config import XRayConfig
+    
     service_id = extra_data.get("service_id")
 
-    host_map = get_service_host_map_cached(service_id)
+    with GetDB() as db:
+        raw_config = crud.get_xray_config(db)
+        xray_config = XRayConfig(raw_config, api_port=xray.config.api_port)
+    
+    inbounds_by_tag = xray_config.inbounds_by_tag
+    
+    host_map = get_service_host_map_cached(service_id, force_refresh=True)
     inbound_index = {
-        tag: index for index, tag in enumerate(xray.config.inbounds_by_tag.keys())
+        tag: index for index, tag in enumerate(inbounds_by_tag.keys())
     }
 
     service_host_orders = (extra_data or {}).get("service_host_orders") or {}
@@ -276,7 +286,7 @@ def process_inbounds_and_tags(
             continue
 
         for tag in tags:
-            inbound = xray.config.inbounds_by_tag.get(tag)
+            inbound = inbounds_by_tag.get(tag)
             if not inbound:
                 continue
 

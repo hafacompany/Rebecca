@@ -89,4 +89,5 @@ class SystemStats(BaseModel):
     personal_usage: PersonalUsageStats
     admin_overview: AdminOverviewStats
     last_xray_error: Optional[str] = None
+    last_telegram_error: Optional[str] = None
     redis_stats: Optional[RedisStats] = None

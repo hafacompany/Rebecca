@@ -303,6 +303,24 @@ def get_system_stats(
             connected=False,
         )
 
+    # Get last Telegram error (only for sudo/full_access admins)
+    last_telegram_error = None
+    if admin.role in (AdminRole.sudo, AdminRole.full_access):
+        try:
+            from app.telegram.handlers.report import get_last_telegram_error
+            telegram_error = get_last_telegram_error()
+            if telegram_error:
+                error_code = telegram_error.get("error_code")
+                description = telegram_error.get("description", telegram_error.get("error", ""))
+                category = telegram_error.get("category", "unknown")
+                target = telegram_error.get("target", "unknown")
+                if error_code:
+                    last_telegram_error = f"Error {error_code}: {description} (Category: {category}, Target: {target})"
+                else:
+                    last_telegram_error = f"{description} (Category: {category}, Target: {target})"
+        except Exception:
+            pass
+
     return SystemStats(
         version=__version__,
         cpu_cores=cpu.cores,
@@ -352,6 +370,7 @@ def get_system_stats(
         personal_usage=personal_usage,
         admin_overview=admin_overview,
         last_xray_error=last_xray_error,
+        last_telegram_error=last_telegram_error,
         redis_stats=redis_stats,
     )
 

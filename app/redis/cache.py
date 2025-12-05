@@ -898,13 +898,14 @@ def cache_service(service: Any) -> bool:
         return False
     
     try:
-        from app.db.models import Service
         service_dict = {
             'id': service.id,
             'name': service.name,
-            'data_limit': service.data_limit,
-            'expire_duration': service.expire_duration,
-            'inbounds': service.inbounds,
+            'description': getattr(service, "description", None),
+            'flow': getattr(service, "flow", None),
+            'used_traffic': getattr(service, "used_traffic", None),
+            'lifetime_used_traffic': getattr(service, "lifetime_used_traffic", None),
+            'inbounds': getattr(service, "inbounds", None),
             'created_at': service.created_at.isoformat() if service.created_at else None,
             'updated_at': service.updated_at.isoformat() if service.updated_at else None,
         }
@@ -943,9 +944,11 @@ def cache_services_list(services: List[Any]) -> bool:
             service_dict = {
                 'id': service.id,
                 'name': service.name,
-                'data_limit': service.data_limit,
-                'expire_duration': service.expire_duration,
-                'inbounds': service.inbounds,
+                'description': getattr(service, "description", None),
+                'flow': getattr(service, "flow", None),
+                'used_traffic': getattr(service, "used_traffic", None),
+                'lifetime_used_traffic': getattr(service, "lifetime_used_traffic", None),
+                'inbounds': getattr(service, "inbounds", None),
             }
             services_list.append(service_dict)
         
@@ -1132,4 +1135,3 @@ def warmup_services_inbounds_hosts_cache() -> Tuple[int, int, int]:
     except Exception as e:
         logger.error(f"Failed to warmup services/inbounds/hosts cache: {e}", exc_info=True)
         return (0, 0, 0)
-

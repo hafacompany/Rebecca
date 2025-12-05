@@ -288,17 +288,14 @@ export const MyAccountPage: React.FC = () => {
     { keepPreviousData: true }
   );
   const username = userData?.username;
-  const privilegedRole =
-    userData?.role === AdminRole.Sudo ||
-    userData?.role === AdminRole.FullAccess ||
-    userData?.role === AdminRole.Standard;
+  const isFullAccess = userData?.role === AdminRole.FullAccess;
   const baseSelfPermissions =
     userData?.permissions?.self_permissions || {
       self_myaccount: true,
       self_change_password: true,
       self_api_keys: true,
     };
-  const selfPermissions = privilegedRole
+  const selfPermissions = isFullAccess
     ? { self_myaccount: true, self_change_password: true, self_api_keys: true }
     : baseSelfPermissions;
   const { data: nodesData, isFetching: isFetchingNodes } = useQuery(

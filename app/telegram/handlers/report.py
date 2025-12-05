@@ -1,7 +1,7 @@
 import re
 import time
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict, Any
 
 from telebot.apihelper import ApiTelegramException
 from telebot.formatting import escape_html
@@ -23,6 +23,8 @@ CATEGORY_ADMINS = "admins"
 CATEGORY_ERRORS = "errors"
 
 _MAX_RATE_LIMIT_DELAY = 60
+
+_last_telegram_error: Optional[Dict[str, Any]] = None
 
 
 def _extract_retry_after(exc: ApiTelegramException) -> Optional[int]:
@@ -70,6 +72,21 @@ def _send_with_retry(send_callable: Callable[[], None], *, category: str, target
                 )
                 time.sleep(retry_delay)
                 continue
+            error_msg = str(exc)
+            error_code = getattr(exc, "error_code", None)
+            error_description = getattr(exc, "description", error_msg)
+            
+            # Store last error for dashboard display
+            global _last_telegram_error
+            _last_telegram_error = {
+                "error": error_msg,
+                "error_code": error_code,
+                "description": error_description,
+                "category": category,
+                "target": target_desc,
+                "timestamp": time.time(),
+            }
+            
             logger.error(
                 "Failed to send Telegram notification to %s for category '%s': %s",
                 target_desc,
@@ -77,7 +94,20 @@ def _send_with_retry(send_callable: Callable[[], None], *, category: str, target
                 exc,
             )
             return False
-        except Exception:  # pragma: no cover - defensive logging
+        except Exception as e:  # pragma: no cover - defensive logging
+            error_msg = str(e)
+            
+            # Store last error for dashboard display
+            global _last_telegram_error
+            _last_telegram_error = {
+                "error": error_msg,
+                "error_code": None,
+                "description": error_msg,
+                "category": category,
+                "target": target_desc,
+                "timestamp": time.time(),
+            }
+            
             logger.exception(
                 "Unexpected error while sending Telegram notification to %s for category '%s'",
                 target_desc,
@@ -181,6 +211,11 @@ def _dispatch(
             "Telegram notification for category '%s' had no recipients configured",
             category,
         )
+
+
+def get_last_telegram_error() -> Optional[Dict[str, Any]]:
+    """Get the last Telegram error for dashboard display."""
+    return _last_telegram_error
 
 
 def report(

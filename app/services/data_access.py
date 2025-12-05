@@ -21,12 +21,16 @@ from config import REDIS_ENABLED
 # They use Redis caching when available, falling back to DB/state helpers.
 
 
-def get_xray_config_cached(db: Session) -> dict:
+def get_xray_config_cached(db: Session, force_refresh: bool = False) -> dict:
     """
     Return the current Xray config.
     Uses Redis cache if available, otherwise falls back to database.
+    
+    Args:
+        db: Database session
+        force_refresh: If True, force refresh from DB even if cache exists
     """
-    if REDIS_ENABLED:
+    if REDIS_ENABLED and not force_refresh:
         cached_inbounds = get_cached_inbounds()
         if cached_inbounds:
             # Reconstruct xray config from cached inbounds
@@ -51,18 +55,23 @@ def get_service_allowed_inbounds_cached(db: Session, service) -> Dict[str, Any]:
     return crud.get_service_allowed_inbounds(service)
 
 
-def get_service_host_map_cached(service_id: Optional[int]) -> Dict[str, Any]:
+def get_service_host_map_cached(service_id: Optional[int], force_refresh: bool = False) -> Dict[str, Any]:
     """
     Return host map for a given service_id.
     Uses Redis cache if available, otherwise falls back to in-memory cache.
+    
+    Args:
+        service_id: Service ID to get host map for
+        force_refresh: If True, force refresh from DB even if cache exists
     """
-    if REDIS_ENABLED:
+    if REDIS_ENABLED and not force_refresh:
         cached_host_map = get_cached_service_host_map(service_id)
         if cached_host_map is not None:
             return cached_host_map
     
-    # Fallback to in-memory cache
-    host_map = xray_state.get_service_host_map(service_id)
+    # Fallback to in-memory cache (which will rebuild if needed)
+    # Force rebuild if force_refresh is True
+    host_map = xray_state.get_service_host_map(service_id, force_rebuild=force_refresh)
     
     # Cache in Redis for next time (async, don't block)
     if REDIS_ENABLED:

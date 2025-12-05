@@ -427,6 +427,17 @@ def reset_user_data_usage(db: Session, dbuser: User) -> User:
     Returns:
         User: The updated user object.
     """
+    # Ensure user is in session - merge if detached or transient
+    from sqlalchemy.inspection import inspect
+    user_state = inspect(dbuser)
+    if user_state.detached or user_state.transient:
+        dbuser = db.merge(dbuser)
+        user_state = inspect(dbuser)
+    
+    # Refresh user state to ensure we have latest data
+    if user_state.persistent:
+        db.refresh(dbuser, ['used_traffic', 'status', 'node_usages', 'next_plan'])
+    
     usage_log = UserUsageResetLogs(
         user=dbuser,
         used_traffic_at_reset=dbuser.used_traffic,
@@ -452,7 +463,6 @@ def reset_user_data_usage(db: Session, dbuser: User) -> User:
     if dbuser.next_plan:
         db.delete(dbuser.next_plan)
         dbuser.next_plan = None
-    db.add(dbuser)
 
     db.commit()
     db.refresh(dbuser)

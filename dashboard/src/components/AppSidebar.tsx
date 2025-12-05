@@ -84,16 +84,13 @@ export const AppSidebar: FC<AppSidebarProps> = ({ collapsed, inDrawer = false, o
     }
   }, [t, userData.role]);
   const sectionAccess = userData.permissions?.sections;
-  const privilegedSelf =
-    userData.role === AdminRole.FullAccess ||
-    userData.role === AdminRole.Sudo ||
-    userData.role === AdminRole.Standard;
+  const isFullAccess = userData.role === AdminRole.FullAccess;
   const baseSelf = userData.permissions?.self_permissions || {
     self_myaccount: true,
     self_change_password: true,
     self_api_keys: true,
   };
-  const selfAccess = privilegedSelf
+  const selfAccess = isFullAccess
     ? { self_myaccount: true, self_change_password: true, self_api_keys: true }
     : baseSelf;
   const canViewUsage = Boolean(sectionAccess?.[AdminSection.Usage]);

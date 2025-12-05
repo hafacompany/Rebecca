@@ -84,5 +84,6 @@ export interface SystemStats {
   personal_usage: PersonalUsageStats;
   admin_overview: AdminOverviewStats;
   last_xray_error?: string | null;
+  last_telegram_error?: string | null;
   redis_stats?: RedisStats | null;
 }
