@@ -1,4 +1,4 @@
-import { Badge, Text } from "@chakra-ui/react";
+import { Badge, Text, Box } from "@chakra-ui/react";
 
 import { statusColors } from "constants/UserSettings";
 import { FC } from "react";
@@ -48,9 +48,9 @@ export const StatusBadge: FC<UserStatusProps> = ({
           </Text>
         )}
       </Badge>
-      {showDetail && expiryDate && (
+      {showDetail && expiryDate && dateInfo.time && (
         <Text
-          display="inline-block"
+          display="inline-flex"
           fontSize="xs"
           fontWeight="medium"
           ml="2"
@@ -58,8 +58,25 @@ export const StatusBadge: FC<UserStatusProps> = ({
           _dark={{
             color: "gray.400",
           }}
+          as="span"
+          gap={1}
+          alignItems="center"
         >
-          {t(dateInfo.status, { time: dateInfo.time })}
+          {dateInfo.status === "expires" ? (
+            <>
+              <Text as="span">{t("expires").replace("{{time}}", "").trim()}</Text>
+              <Box as="span" dir="ltr" display="inline" style={{ unicodeBidi: "embed" }}>
+                {dateInfo.time}
+              </Box>
+            </>
+          ) : (
+            <>
+              <Box as="span" dir="ltr" display="inline" style={{ unicodeBidi: "embed" }}>
+                {dateInfo.time}
+              </Box>
+              <Text as="span">{" " + (t("expired").includes("{{time}}") ? t("expired").split("{{time}}")[1] : " پیش به پایان رسیده")}</Text>
+            </>
+          )}
         </Text>
       )}
     </>

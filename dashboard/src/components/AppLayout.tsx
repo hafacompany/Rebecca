@@ -63,6 +63,7 @@ export function AppLayout() {
   const actionsContentRef = useRef<HTMLDivElement | null>(null);
   const { t, i18n } = useTranslation();
   useAppleEmoji();
+  const isRTL = i18n.language === "fa";
 
   const languageItems = [
     { code: "en", label: "English", flag: "US" },
@@ -76,7 +77,7 @@ export function AppLayout() {
   };
 
   return (
-    <Flex minH="100vh" maxH="100vh" overflow="hidden">
+    <Flex minH="100vh" maxH="100vh" overflow="hidden" direction={isRTL ? "row-reverse" : "row"}>
       {/* persistent sidebar on md+; drawer on mobile */}
       {!isMobile ? (
         <AppSidebar collapsed={sidebarCollapsed} onRequestExpand={() => setSidebarCollapsed(false)} />
@@ -87,8 +88,9 @@ export function AppLayout() {
         direction="column" 
         minW="0" 
         overflow="hidden"
-        ml={isMobile ? "0" : sidebarCollapsed ? "16" : "60"}
-        transition="margin-left 0.3s"
+        ml={isMobile || isRTL ? "0" : sidebarCollapsed ? "16" : "60"}
+        mr={isMobile || !isRTL ? "0" : sidebarCollapsed ? "16" : "60"}
+        transition={isRTL ? "margin-right 0.3s" : "margin-left 0.3s"}
       >
         <Box
           as="header"
@@ -224,7 +226,7 @@ export function AppLayout() {
 
         {/* mobile drawer */}
         {isMobile && (
-          <Drawer isOpen={sidebarDrawer.isOpen} placement="left" onClose={sidebarDrawer.onClose} size="xs">
+          <Drawer isOpen={sidebarDrawer.isOpen} placement={isRTL ? "right" : "left"} onClose={sidebarDrawer.onClose} size="xs">
             <DrawerOverlay />
             <DrawerContent bg="surface.light" _dark={{ bg: "surface.dark" }}>
               <DrawerBody p={0}>

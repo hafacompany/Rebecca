@@ -18,7 +18,7 @@ from app import runtime
 from app.db import GetDB, crud
 from app.utils.system import register_scheduler_jobs
 
-__version__ = "0.0.25"
+__version__ = "0.0.26"
 
 IS_RUNNING_ALEMBIC = any("alembic" in (arg or "").lower() for arg in sys.argv)
 if IS_RUNNING_ALEMBIC:
@@ -150,6 +150,14 @@ if not SKIP_RUNTIME_INIT:
                     logger.info(f"Usage cache warmup completed: {cached}/{total} records cached")
                 except Exception as e:
                     logger.warning(f"Failed to warmup usage cache: {e}", exc_info=True)
+                
+                # Warmup services, inbounds, and hosts cache
+                try:
+                    from app.redis.cache import warmup_services_inbounds_hosts_cache
+                    services_count, inbounds_count, hosts_count = warmup_services_inbounds_hosts_cache()
+                    logger.info(f"Services/inbounds/hosts cache warmup completed: {services_count} services, {inbounds_count} inbounds, {hosts_count} hosts")
+                except Exception as e:
+                    logger.warning(f"Failed to warmup services/inbounds/hosts cache: {e}", exc_info=True)
             
             # Run warmup in background thread
             import threading

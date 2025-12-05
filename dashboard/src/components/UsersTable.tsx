@@ -27,6 +27,7 @@ import {
   Tooltip,
   Tr,
   useBreakpointValue,
+  SystemStyleObject,
   VStack,
 } from "@chakra-ui/react";
 import {
@@ -167,6 +168,9 @@ const UsageSlider: FC<UsageSliderProps> = (props) => {
         }}
       >
         <Text>
+          {t("usersTable.total")}: {formatBytes(totalUsedTraffic)}
+        </Text>
+        <Text>
           {formatBytes(used)} /{" "}
           {isUnlimited ? (
             <Text as="span" fontFamily="system-ui">
@@ -182,9 +186,6 @@ const UsageSlider: FC<UsageSliderProps> = (props) => {
                 )
               : "")
           )}
-        </Text>
-        <Text>
-          {t("usersTable.total")}: {formatBytes(totalUsedTraffic)}
         </Text>
       </HStack>
     </>
@@ -213,10 +214,32 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
     loading,
   } = useDashboard();
 
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRTL = i18n.language === "fa";
   const [selectedRow, setSelectedRow] = useState<ExpandedIndex | undefined>(
     undefined
   );
+  const { className, sx, ...restProps } = props;
+  const rtlTableBaseSx: SystemStyleObject | undefined = isRTL
+    ? {
+        "& th": { textAlign: "right" },
+        "& td": { textAlign: "right" },
+      }
+    : undefined;
+  const normalizedSx: SystemStyleObject | undefined = Array.isArray(sx)
+    ? Object.assign({}, ...sx)
+    : (sx as SystemStyleObject | undefined);
+  const combinedTableSx: SystemStyleObject | undefined = rtlTableBaseSx
+    ? { ...rtlTableBaseSx, ...(normalizedSx || {}) }
+    : normalizedSx;
+  const tableClassName = isRTL ? classNames(className, "rb-rtl-table") : className;
+  const tableDir = isRTL ? "ltr" : undefined;
+  const tableProps = {
+    ...restProps,
+    className: tableClassName,
+    dir: tableDir,
+    sx: combinedTableSx,
+  };
   
   const useTable = useBreakpointValue({ base: false, md: true });
 
@@ -285,7 +308,7 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
         display={{ base: "block", md: "none" }}
         index={selectedRow}
       >
-        <Table orientation="vertical" zIndex="docked" {...props}>
+        <Table orientation="vertical" zIndex="docked" {...tableProps}>
           <Thead zIndex="docked" position="relative">
             <Tr>
               <Th
@@ -587,26 +610,16 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
           orientation="vertical"
           display={{ base: "none", md: "table" }}
           minW={{ base: "100%", md: "800px" }}
-          {...props}
+          {...tableProps}
         >
         <Thead position="relative" zIndex="docked">
           <Tr>
-            <Th
-              minW="140px"
-              cursor={"pointer"}
-              onClick={handleSort.bind(null, "username")}
-            >
-              <HStack>
-                <span>{t("username")}</span>
-                <Sort sort={filters.sort} column="username" />
-              </HStack>
-            </Th>
             <Th
               width="400px"
               minW="150px"
               cursor={"pointer"}
             >
-              <HStack position="relative" gap={"5px"}>
+              <HStack position="relative" gap={"5px"} direction="row">
                 <Text
                   _dark={{
                     bg: "gray.750",
@@ -624,34 +637,34 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                 <Text>/</Text>
                 <Sort sort={filters.sort} column="expire" />
                 <HStack onClick={handleSort.bind(null, "expire")}>
-                  <Text>Sort by expire</Text>
+                  <Text>{t("usersTable.sortByExpire", "Sort by expire")}</Text>
                 </HStack>
-                <Select
-                  fontSize="xs"
-                  fontWeight="extrabold"
-                  textTransform="uppercase"
-                  cursor="pointer"
-                  position={"absolute"}
-                  p={0}
-                  left={"-40px"}
-                  border={0}
-                  h="auto"
-                  w="auto"
-                  icon={<></>}
-                  _focusVisible={{
+              </HStack>
+              <Select
+                fontSize="xs"
+                fontWeight="extrabold"
+                textTransform="uppercase"
+                cursor="pointer"
+                position={"absolute"}
+                p={0}
+                left="-40px"
+                border={0}
+                h="auto"
+                w="auto"
+                icon={<></>}
+                _focusVisible={{
                     border: "0 !important",
                   }}
                   value={filters.sort}
-                  onChange={handleStatusFilter}
-                >
-                  <option></option>
-                  <option>active</option>
-                  <option>on_hold</option>
-                  <option>disabled</option>
-                  <option>limited</option>
-                  <option>expired</option>
-                </Select>
-              </HStack>
+                onChange={handleStatusFilter}
+              >
+                <option></option>
+                <option>active</option>
+                <option>on_hold</option>
+                <option>disabled</option>
+                <option>limited</option>
+                <option>expired</option>
+              </Select>
             </Th>
             <Th minW="150px">
               <span>{t("usersTable.service", "Service")}</span>
@@ -662,7 +675,7 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
               cursor={"pointer"}
               onClick={handleSort.bind(null, "used_traffic")}
             >
-              <HStack>
+              <HStack direction="row" justify="flex-start">
                 <span>{t("usersTable.dataUsage")}</span>
                 <Sort sort={filters.sort} column="used_traffic" />
               </HStack>
@@ -670,7 +683,18 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
             <Th
               width="200px"
               minW="180px"
+              data-actions="true"
             />
+            <Th
+              minW="140px"
+              cursor={"pointer"}
+              onClick={handleSort.bind(null, "username")}
+            >
+              <HStack direction="row" justify="flex-start">
+                <span>{t("username")}</span>
+                <Sort sort={filters.sort} column="username" />
+              </HStack>
+            </Th>
           </Tr>
         </Thead>
         <Tbody>
@@ -709,13 +733,6 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                       }}
                       cursor={canCreateUsers ? "pointer" : "default"}
                     >
-                      <Td minW="140px">
-                        <div className="flex-status">
-                          <OnlineBadge lastOnline={user.online_at} />
-                          {user.username}
-                          <OnlineStatus lastOnline={user.online_at} />
-                        </div>
-                      </Td>
                       <Td width="400px" minW="150px">
                         <StatusBadge
                           expiryDate={user.expire}
@@ -742,8 +759,15 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                           colorScheme={statusColors[user.status].bandWidthColor}
                         />
                       </Td>
-                      <Td width="200px" minW="180px">
+                      <Td width="200px" minW="180px" data-actions="true">
                         <ActionButtons user={user} />
+                      </Td>
+                      <Td minW="140px">
+                        <div className="flex-status">
+                          <OnlineBadge lastOnline={user.online_at} />
+                          {user.username}
+                          <OnlineStatus lastOnline={user.online_at} />
+                        </div>
                       </Td>
                     </Tr>
                   );

@@ -66,8 +66,10 @@ def get_user_queryset(db: Session, eager_load: bool = True) -> Query:
     if eager_load:
         # Use selectinload for one-to-many relationships (more efficient)
         # Use joinedload for many-to-one relationships (single row per user)
+        from app.db.models import Service
         options = [
             joinedload(User.admin),  # many-to-one: one admin per user
+            joinedload(User.service).joinedload(Service.host_links),  # many-to-one: one service per user, with host_links for service_host_orders
             selectinload(User.proxies).selectinload(Proxy.excluded_inbounds),
             selectinload(User.usage_logs),  # one-to-many: for lifetime_used_traffic
         ]
@@ -120,9 +122,10 @@ def _next_plan_table_exists(db: Session) -> bool:
 
 def get_user(db: Session, username: Optional[str] = None, user_id: Optional[int] = None) -> Optional[User]:
     """Retrieves a user by username or user ID. Uses Redis cache if available."""
-    # Try Redis cache first
+    # Try Redis cache first to reduce DB load
     try:
         from app.redis.cache import get_cached_user
+
         cached_user = get_cached_user(username=username, user_id=user_id, db=db)
         if cached_user:
             # Refresh from DB to get latest relationships
@@ -134,16 +137,17 @@ def get_user(db: Session, username: Optional[str] = None, user_id: Optional[int]
                 db_user = query.filter(func.lower(User.username) == normalized).first()
             else:
                 db_user = None
-            
+
             if db_user:
-                # Update cache with fresh data
+                # Update cache with fresh data and return
                 from app.redis.cache import cache_user
+
                 cache_user(db_user)
                 return db_user
             return cached_user
     except Exception as e:
         _logger.debug(f"Failed to get user from Redis cache: {e}")
-    
+
     # Fallback to DB
     query = get_user_queryset(db)
     if user_id is not None:
@@ -153,15 +157,16 @@ def get_user(db: Session, username: Optional[str] = None, user_id: Optional[int]
         user = query.filter(func.lower(User.username) == normalized).first()
     else:
         user = None
-    
+
     # Cache for next time
     if user:
         try:
             from app.redis.cache import cache_user
+
             cache_user(user)
         except Exception as e:
             _logger.debug(f"Failed to cache user in Redis: {e}")
-    
+
     return user
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
@@ -551,15 +556,8 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
         if limit:
             query = query.limit(limit)
 
-        try:
-            users = query.all()
-        except Exception as e:
-            _logger.error(f"Failed to execute get_users query: {e}")
-            # Return empty list on error to prevent crash
-            if return_with_count:
-                return [], 0
-            return []
-        
+        users = query.all()
+
         # Cache users in Redis for future queries
         try:
             from app.redis.cache import cache_user
@@ -705,6 +703,7 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None, service: Opt
                   excluded_inbounds=excluded_inbounds)
         )
 
+    # Create a fresh User object - ensure it's not from Redis cache (which would have id set)
     dbuser = User(username=user.username, credential_key=credential_key, flow=user.flow, proxies=proxies, status=resolved_status,
                   data_limit=(user.data_limit or None), expire=(user.expire or None), admin=admin,
                   data_limit_reset_strategy=user.data_limit_reset_strategy, note=user.note,
@@ -713,6 +712,11 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None, service: Opt
                   next_plan=NextPlan(data_limit=user.next_plan.data_limit, expire=user.next_plan.expire,
                                      add_remaining_traffic=user.next_plan.add_remaining_traffic,
                                      fire_on_either=user.next_plan.fire_on_either) if user.next_plan else None)
+    
+    # Ensure id is None for new user (prevent duplicate key error if object came from Redis cache)
+    if hasattr(dbuser, 'id') and dbuser.id is not None:
+        dbuser.id = None
+    
     if service:
         dbuser.service = service
         from app.db.crud.service import _service_allowed_inbounds

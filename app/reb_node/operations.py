@@ -5,9 +5,11 @@ import logging
 import uuid
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.reb_node import state
 from app.db import GetDB, crud
+from app.db.models import User, Service, Proxy
 from app.models.node import NodeResponse, NodeStatus
 from app.models.user import UserResponse
 from app.utils import report
@@ -142,6 +144,12 @@ def _prepare_user_for_runtime(dbuser: "DBUser") -> "DBUser":
 
     user_id = getattr(dbuser, "id", None)
     try:
+        # Try to access all relationships to ensure they're loaded
+        _ = getattr(dbuser, "service", None)
+        if dbuser.service:
+            _ = list(dbuser.service.host_links)  # Ensure host_links are loaded
+        _ = list(getattr(dbuser, "usage_logs", []))  # Ensure usage_logs are loaded
+        _ = getattr(dbuser, "next_plan", None)  # Ensure next_plan is loaded
         for proxy in getattr(dbuser, "proxies", []) or []:
             _ = list(proxy.excluded_inbounds)
         return dbuser
@@ -153,9 +161,29 @@ def _prepare_user_for_runtime(dbuser: "DBUser") -> "DBUser":
 
     try:
         with GetDB() as db:
-            fresh = crud.get_user(db, user_id=user_id)
+            from app.db.models import NextPlan
+            from app.db.crud.user import _next_plan_table_exists
+            query = db.query(User).filter(User.id == user_id)
+            # Eager load all relationships needed for UserResponse
+            options = [
+                joinedload(User.service).joinedload(Service.host_links),  # Load service and its host_links
+                joinedload(User.admin),
+                selectinload(User.proxies).selectinload(Proxy.excluded_inbounds),
+                selectinload(User.usage_logs),  # For lifetime_used_traffic property
+            ]
+            # Add next_plan if table exists
+            if _next_plan_table_exists(db):
+                options.append(joinedload(User.next_plan))
+            query = query.options(*options)
+            fresh = query.first()
             if fresh:
                 try:
+                    # Ensure all relationships are loaded
+                    _ = getattr(fresh, "service", None)
+                    if fresh.service:
+                        _ = list(fresh.service.host_links)  # Ensure host_links are loaded
+                    _ = list(fresh.usage_logs)  # Ensure usage_logs are loaded for lifetime_used_traffic
+                    _ = getattr(fresh, "next_plan", None)  # Ensure next_plan is loaded
                     for proxy in getattr(fresh, "proxies", []) or []:
                         _ = list(proxy.excluded_inbounds)
                 except Exception:
@@ -176,10 +204,21 @@ def _add_account_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
         api.add_inbound_user(tag=inbound_tag, user=account, timeout=600)
     except xray_exceptions.EmailExistsError:
         try:
+            # Try to remove existing user first
             api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=600)
+            # Then add the updated user
             api.add_inbound_user(tag=inbound_tag, user=account, timeout=600)
+        except xray_exceptions.EmailNotFoundError:
+            # User doesn't exist in Xray, just add it
+            try:
+                api.add_inbound_user(tag=inbound_tag, user=account, timeout=600)
+            except Exception as e:
+                logger.error(f"Failed to add user {account.email} to {inbound_tag} after EmailNotFoundError: {e}")
+        except xray_exceptions.ConnectionError:
+            pass
         except Exception as e:
-            logger.warning(f"Failed to update existing user {account.email} in {inbound_tag}: {e}")
+            # Log as debug instead of warning since this is expected when user doesn't exist in Xray
+            logger.debug(f"Failed to update existing user {account.email} in {inbound_tag}: {e}")
     except xray_exceptions.ConnectionError:
         pass
     except Exception as e:

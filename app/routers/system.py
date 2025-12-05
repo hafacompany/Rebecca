@@ -556,6 +556,24 @@ def create_inbound(
     crud.get_or_create_inbound(db, tag)
     # Ensure hosts cache is updated after inbound is created
     xray.hosts.update()
+    
+    # Update Redis cache
+    from config import REDIS_ENABLED
+    if REDIS_ENABLED:
+        try:
+            from app.redis.cache import cache_inbounds, invalidate_service_host_map_cache
+            from app.reb_node.config import XRayConfig
+            raw_config = crud.get_xray_config(db)
+            xray_config = XRayConfig(raw_config, api_port=xray.config.api_port)
+            inbounds_dict = {
+                'inbounds_by_tag': {tag: inbound for tag, inbound in xray_config.inbounds_by_tag.items()},
+                'inbounds_by_protocol': {proto: tags for proto, tags in xray_config.inbounds_by_protocol.items()},
+            }
+            cache_inbounds(inbounds_dict)
+            invalidate_service_host_map_cache()
+        except Exception:
+            pass  # Don't fail if Redis is unavailable
+    
     return _sanitize_inbound(inbound)
 
 
@@ -581,6 +599,24 @@ def update_inbound(
     crud.get_or_create_inbound(db, tag)
     # Ensure hosts cache is updated after inbound is updated
     xray.hosts.update()
+    
+    # Update Redis cache
+    from config import REDIS_ENABLED
+    if REDIS_ENABLED:
+        try:
+            from app.redis.cache import cache_inbounds, invalidate_service_host_map_cache
+            from app.reb_node.config import XRayConfig
+            raw_config = crud.get_xray_config(db)
+            xray_config = XRayConfig(raw_config, api_port=xray.config.api_port)
+            inbounds_dict = {
+                'inbounds_by_tag': {tag: inbound for tag, inbound in xray_config.inbounds_by_tag.items()},
+                'inbounds_by_protocol': {proto: tags for proto, tags in xray_config.inbounds_by_protocol.items()},
+            }
+            cache_inbounds(inbounds_dict)
+            invalidate_service_host_map_cache()
+        except Exception:
+            pass  # Don't fail if Redis is unavailable
+    
     return _sanitize_inbound(inbound)
 
 
@@ -623,6 +659,23 @@ def delete_inbound(
 
     db.commit()
     xray.hosts.update()
+    
+    # Update Redis cache
+    from config import REDIS_ENABLED
+    if REDIS_ENABLED:
+        try:
+            from app.redis.cache import cache_inbounds, invalidate_service_host_map_cache
+            from app.reb_node.config import XRayConfig
+            raw_config = crud.get_xray_config(db)
+            xray_config = XRayConfig(raw_config, api_port=xray.config.api_port)
+            inbounds_dict = {
+                'inbounds_by_tag': {tag: inbound for tag, inbound in xray_config.inbounds_by_tag.items()},
+                'inbounds_by_protocol': {proto: tags for proto, tags in xray_config.inbounds_by_protocol.items()},
+            }
+            cache_inbounds(inbounds_dict)
+            invalidate_service_host_map_cache()
+        except Exception:
+            pass  # Don't fail if Redis is unavailable
 
     for user in users_to_refresh.values():
         xray.operations.update_user(dbuser=user)

@@ -310,6 +310,18 @@ class ServiceRepository:
 
         self.db.commit()
         self.db.refresh(service)
+        
+        # Update Redis cache
+        from config import REDIS_ENABLED
+        if REDIS_ENABLED:
+            try:
+                from app.redis.cache import cache_service, invalidate_service_cache, invalidate_service_host_map_cache
+                cache_service(service)
+                invalidate_service_cache()  # Invalidate services list
+                invalidate_service_host_map_cache()  # Invalidate host maps
+            except Exception:
+                pass  # Don't fail if Redis is unavailable
+        
         return service
 
     def update(
@@ -345,6 +357,17 @@ class ServiceRepository:
 
         self.db.commit()
         self.db.refresh(service)
+        
+        # Update Redis cache
+        from config import REDIS_ENABLED
+        if REDIS_ENABLED:
+            try:
+                from app.redis.cache import cache_service, invalidate_service_cache, invalidate_service_host_map_cache
+                cache_service(service)
+                invalidate_service_cache()  # Invalidate services list
+                invalidate_service_host_map_cache()  # Invalidate host maps
+            except Exception:
+                pass  # Don't fail if Redis is unavailable
 
         return service, allowed_before, allowed_after
 
@@ -380,8 +403,21 @@ class ServiceRepository:
             else:
                 raise ValueError("Invalid delete mode")
 
+        service_id = service.id
         self.db.delete(service)
         self.db.commit()
+        
+        # Update Redis cache
+        from config import REDIS_ENABLED
+        if REDIS_ENABLED:
+            try:
+                from app.redis.cache import invalidate_service_cache, invalidate_service_host_map_cache
+                invalidate_service_cache(service_id=service_id)
+                invalidate_service_cache()  # Invalidate services list
+                invalidate_service_host_map_cache()  # Invalidate host maps
+            except Exception:
+                pass  # Don't fail if Redis is unavailable
+        
         return deleted_users, transferred_users
 
     def reset_usage(self, service: Service) -> Service:

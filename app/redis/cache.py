@@ -36,9 +36,19 @@ REDIS_KEY_PREFIX_ADMIN_USAGE_PENDING = "usage:admin:pending:"
 REDIS_KEY_PREFIX_SERVICE_USAGE_PENDING = "usage:service:pending:"
 REDIS_KEY_PREFIX_ADMIN_SERVICE_USAGE_PENDING = "usage:admin_service:pending:"
 
+# Service, Inbound, and Host cache keys
+REDIS_KEY_PREFIX_SERVICE = "service:"
+REDIS_KEY_PREFIX_SERVICE_LIST = "service:list"
+REDIS_KEY_PREFIX_INBOUNDS = "inbounds:"
+REDIS_KEY_PREFIX_HOSTS = "hosts:"
+REDIS_KEY_PREFIX_SERVICE_HOST_MAP = "service_host_map:"
+
 # TTLs
 USER_CACHE_TTL = 86400  # 24 hours
 USAGE_CACHE_TTL = 604800  # 7 days
+SERVICE_CACHE_TTL = 86400  # 24 hours
+INBOUNDS_CACHE_TTL = 86400  # 24 hours
+HOSTS_CACHE_TTL = 86400  # 24 hours
 
 # ============================================================================
 # Helper Functions
@@ -137,14 +147,34 @@ def _serialize_user(user: User) -> Dict[str, Any]:
 
 
 def _deserialize_user(user_dict: Dict[str, Any], db: Optional[Any] = None) -> Optional[User]:
-    """Deserialize user dictionary from Redis to User object."""
+    """Deserialize user dictionary from Redis to User object.
+    
+    WARNING: This creates a detached User object (not attached to any session).
+    Do NOT add this object to a session - it will cause duplicate key errors.
+    Use it only for read-only operations like filtering and sorting.
+    """
     if not user_dict:
         return None
     
     try:
         from app.db.models import Admin as AdminModel, Service as ServiceModel, NextPlan as NextPlanModel, Proxy as ProxyModel, ProxyInbound as InboundModel
+        from sqlalchemy.inspection import inspect as sa_inspect
+        
         user = User()
-        user.id = user_dict.get('id')
+        user_id = user_dict.get('id')
+        if user_id:
+            user.id = user_id
+        
+        # Mark as detached/expired to prevent accidental session attachment
+        # This ensures SQLAlchemy knows this is not a new object and won't try to INSERT it
+        try:
+            state = sa_inspect(user)
+            if state:
+                state.expired = True  # Mark as expired so SQLAlchemy won't try to INSERT
+                state.detached = True  # Mark as detached
+        except Exception:
+            pass  # If inspection fails, object is already detached
+        
         user.username = user_dict.get('username')
         if user_dict.get('status'):
             user.status = UserStatus(user_dict['status'])
@@ -237,12 +267,17 @@ def get_cached_user(username: Optional[str] = None, user_id: Optional[int] = Non
             return None
 
         # Lightweight eager-load to make returned object safe for use
-        query = query.options(
+        from app.db.models import Service
+        from app.db.crud.user import _next_plan_table_exists
+        options = [
+            joinedload(User.service).joinedload(Service.host_links),  # many-to-one: one service per user, with host_links for service_host_orders
+            joinedload(User.admin),  # many-to-one: one admin per user
             selectinload(User.proxies).selectinload(Proxy.excluded_inbounds),
-            joinedload(User.next_plan),
-            joinedload(User.admin),
-            joinedload(User.service),
-        )
+            selectinload(User.usage_logs),  # For lifetime_used_traffic property
+        ]
+        if _next_plan_table_exists(db):
+            options.append(joinedload(User.next_plan))
+        query = query.options(*options)
 
         db_user = query.first()
         if db_user:
@@ -441,8 +476,12 @@ def cache_user_usage_update(user_id: int, used_traffic_delta: int, online_at: Op
         return False
 
 
-def get_pending_usage_updates() -> List[Dict[str, Any]]:
-    """Get all pending usage updates from Redis."""
+def get_pending_usage_updates(max_items: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Get pending usage updates from Redis.
+    
+    Args:
+        max_items: Maximum number of updates to retrieve (None = all)
+    """
     redis_client = get_redis()
     if not redis_client:
         return []
@@ -450,14 +489,21 @@ def get_pending_usage_updates() -> List[Dict[str, Any]]:
     try:
         updates = []
         pattern = "user:usage:*"
-        for key in redis_client.scan_iter(match=pattern):
+        item_count = 0
+        
+        for key in redis_client.scan_iter(match=pattern, count=1000):
+            if max_items and item_count >= max_items:
+                break
             while True:
+                if max_items and item_count >= max_items:
+                    break
                 update_json = redis_client.rpop(key)
                 if not update_json:
                     break
                 try:
                     update_data = json.loads(update_json)
                     updates.append(update_data)
+                    item_count += 1
                 except json.JSONDecodeError:
                     continue
         return updates
@@ -785,8 +831,12 @@ def warmup_all_usages_gradually() -> Tuple[int, int]:
         return (0, 0)
 
 
-def get_pending_usage_snapshots() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Get all pending usage snapshots from Redis."""
+def get_pending_usage_snapshots(max_items: Optional[int] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Get pending usage snapshots from Redis.
+    
+    Args:
+        max_items: Maximum number of snapshots to retrieve per type (None = all)
+    """
     redis_client = get_redis()
     if not redis_client:
         return ([], [])
@@ -794,28 +844,40 @@ def get_pending_usage_snapshots() -> Tuple[List[Dict[str, Any]], List[Dict[str, 
     try:
         user_snapshots = []
         node_snapshots = []
+        user_count = 0
+        node_count = 0
         
         pattern = f"{REDIS_KEY_PREFIX_USER_USAGE_PENDING}*"
-        for key in redis_client.scan_iter(match=pattern):
+        for key in redis_client.scan_iter(match=pattern, count=1000):
+            if max_items and user_count >= max_items:
+                break
             while True:
+                if max_items and user_count >= max_items:
+                    break
                 snapshot_json = redis_client.rpop(key)
                 if not snapshot_json:
                     break
                 try:
                     snapshot = json.loads(snapshot_json)
                     user_snapshots.append(snapshot)
+                    user_count += 1
                 except json.JSONDecodeError:
                     continue
         
         pattern = f"{REDIS_KEY_PREFIX_NODE_USAGE_PENDING}*"
-        for key in redis_client.scan_iter(match=pattern):
+        for key in redis_client.scan_iter(match=pattern, count=1000):
+            if max_items and node_count >= max_items:
+                break
             while True:
+                if max_items and node_count >= max_items:
+                    break
                 snapshot_json = redis_client.rpop(key)
                 if not snapshot_json:
                     break
                 try:
                     snapshot = json.loads(snapshot_json)
                     node_snapshots.append(snapshot)
+                    node_count += 1
                 except json.JSONDecodeError:
                     continue
         
@@ -823,4 +885,251 @@ def get_pending_usage_snapshots() -> Tuple[List[Dict[str, Any]], List[Dict[str, 
     except Exception as e:
         logger.error(f"Failed to get pending usage snapshots: {e}")
         return ([], [])
+
+
+# ============================================================================
+# Service, Inbound, and Host Cache Functions
+# ============================================================================
+
+def cache_service(service: Any) -> bool:
+    """Cache a service in Redis."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+    
+    try:
+        from app.db.models import Service
+        service_dict = {
+            'id': service.id,
+            'name': service.name,
+            'data_limit': service.data_limit,
+            'expire_duration': service.expire_duration,
+            'inbounds': service.inbounds,
+            'created_at': service.created_at.isoformat() if service.created_at else None,
+            'updated_at': service.updated_at.isoformat() if service.updated_at else None,
+        }
+        service_json = json.dumps(service_dict)
+        redis_client.setex(f"{REDIS_KEY_PREFIX_SERVICE}{service.id}", SERVICE_CACHE_TTL, service_json)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to cache service {service.id}: {e}")
+        return False
+
+
+def get_cached_service(service_id: int) -> Optional[Dict[str, Any]]:
+    """Get a service from Redis cache."""
+    redis_client = get_redis()
+    if not redis_client:
+        return None
+    
+    try:
+        service_json = redis_client.get(f"{REDIS_KEY_PREFIX_SERVICE}{service_id}")
+        if service_json:
+            return json.loads(service_json)
+    except Exception as e:
+        logger.error(f"Failed to get cached service {service_id}: {e}")
+    return None
+
+
+def cache_services_list(services: List[Any]) -> bool:
+    """Cache list of all services in Redis."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+    
+    try:
+        services_list = []
+        for service in services:
+            service_dict = {
+                'id': service.id,
+                'name': service.name,
+                'data_limit': service.data_limit,
+                'expire_duration': service.expire_duration,
+                'inbounds': service.inbounds,
+            }
+            services_list.append(service_dict)
+        
+        services_json = json.dumps(services_list)
+        redis_client.setex(REDIS_KEY_PREFIX_SERVICE_LIST, SERVICE_CACHE_TTL, services_json)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to cache services list: {e}")
+        return False
+
+
+def get_cached_services_list() -> Optional[List[Dict[str, Any]]]:
+    """Get list of all services from Redis cache."""
+    redis_client = get_redis()
+    if not redis_client:
+        return None
+    
+    try:
+        services_json = redis_client.get(REDIS_KEY_PREFIX_SERVICE_LIST)
+        if services_json:
+            return json.loads(services_json)
+    except Exception as e:
+        logger.error(f"Failed to get cached services list: {e}")
+    return None
+
+
+def invalidate_service_cache(service_id: Optional[int] = None) -> bool:
+    """Invalidate service cache."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+    
+    try:
+        if service_id:
+            redis_client.delete(f"{REDIS_KEY_PREFIX_SERVICE}{service_id}")
+        else:
+            # Invalidate all services
+            pattern = f"{REDIS_KEY_PREFIX_SERVICE}*"
+            for key in redis_client.scan_iter(match=pattern):
+                redis_client.delete(key)
+        redis_client.delete(REDIS_KEY_PREFIX_SERVICE_LIST)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to invalidate service cache: {e}")
+        return False
+
+
+def cache_inbounds(inbounds: Dict[str, Any]) -> bool:
+    """Cache inbounds configuration in Redis."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+    
+    try:
+        inbounds_json = json.dumps(inbounds)
+        redis_client.setex(REDIS_KEY_PREFIX_INBOUNDS, INBOUNDS_CACHE_TTL, inbounds_json)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to cache inbounds: {e}")
+        return False
+
+
+def get_cached_inbounds() -> Optional[Dict[str, Any]]:
+    """Get inbounds configuration from Redis cache."""
+    redis_client = get_redis()
+    if not redis_client:
+        return None
+    
+    try:
+        inbounds_json = redis_client.get(REDIS_KEY_PREFIX_INBOUNDS)
+        if inbounds_json:
+            return json.loads(inbounds_json)
+    except Exception as e:
+        logger.error(f"Failed to get cached inbounds: {e}")
+    return None
+
+
+def invalidate_inbounds_cache() -> bool:
+    """Invalidate inbounds cache."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+    
+    try:
+        redis_client.delete(REDIS_KEY_PREFIX_INBOUNDS)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to invalidate inbounds cache: {e}")
+        return False
+
+
+def cache_service_host_map(service_id: Optional[int], host_map: Dict[str, List[Dict[str, Any]]]) -> bool:
+    """Cache service host map in Redis."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+    
+    try:
+        key = f"{REDIS_KEY_PREFIX_SERVICE_HOST_MAP}{service_id if service_id is not None else 'none'}"
+        host_map_json = json.dumps(host_map)
+        redis_client.setex(key, HOSTS_CACHE_TTL, host_map_json)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to cache service host map for service {service_id}: {e}")
+        return False
+
+
+def get_cached_service_host_map(service_id: Optional[int]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+    """Get service host map from Redis cache."""
+    redis_client = get_redis()
+    if not redis_client:
+        return None
+    
+    try:
+        key = f"{REDIS_KEY_PREFIX_SERVICE_HOST_MAP}{service_id if service_id is not None else 'none'}"
+        host_map_json = redis_client.get(key)
+        if host_map_json:
+            return json.loads(host_map_json)
+    except Exception as e:
+        logger.error(f"Failed to get cached service host map for service {service_id}: {e}")
+    return None
+
+
+def invalidate_service_host_map_cache() -> bool:
+    """Invalidate all service host map caches."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+    
+    try:
+        pattern = f"{REDIS_KEY_PREFIX_SERVICE_HOST_MAP}*"
+        for key in redis_client.scan_iter(match=pattern):
+            redis_client.delete(key)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to invalidate service host map cache: {e}")
+        return False
+
+
+def warmup_services_inbounds_hosts_cache() -> Tuple[int, int, int]:
+    """Warm up Redis cache with services, inbounds, and hosts data."""
+    redis_client = get_redis()
+    if not redis_client:
+        logger.info("Redis not available, skipping services/inbounds/hosts cache warmup")
+        return (0, 0, 0)
+    
+    try:
+        from app.db import GetDB
+        from app.db import crud
+        from app.reb_node import state as xray_state
+        
+        services_count = 0
+        inbounds_count = 0
+        hosts_count = 0
+        
+        with GetDB() as db:
+            # Cache services
+            services = crud.list_services(db, limit=10000)['services']
+            for service in services:
+                if cache_service(service):
+                    services_count += 1
+            cache_services_list(services)
+            
+            # Cache inbounds (from xray config)
+            from app.reb_node.config import XRayConfig
+            raw_config = crud.get_xray_config(db)
+            xray_config = XRayConfig(raw_config, api_port=xray_state.config.api_port)
+            inbounds_dict = {
+                'inbounds_by_tag': {tag: inbound for tag, inbound in xray_config.inbounds_by_tag.items()},
+                'inbounds_by_protocol': {proto: tags for proto, tags in xray_config.inbounds_by_protocol.items()},
+            }
+            if cache_inbounds(inbounds_dict):
+                inbounds_count = len(xray_config.inbounds_by_tag)
+            
+            # Cache service host maps
+            xray_state.rebuild_service_hosts_cache()
+            for service_id in xray_state.service_hosts_cache.keys():
+                host_map = xray_state.service_hosts_cache.get(service_id)
+                if host_map and cache_service_host_map(service_id, host_map):
+                    hosts_count += len([h for hosts in host_map.values() for h in hosts])
+        
+        logger.info(f"Warmed up cache: {services_count} services, {inbounds_count} inbounds, {hosts_count} hosts")
+        return (services_count, inbounds_count, hosts_count)
+    except Exception as e:
+        logger.error(f"Failed to warmup services/inbounds/hosts cache: {e}", exc_info=True)
+        return (0, 0, 0)
 

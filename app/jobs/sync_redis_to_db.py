@@ -27,6 +27,7 @@ def sync_usage_updates_to_db():
     """
     Sync pending usage updates from Redis to database.
     This job runs periodically to batch update user usage statistics.
+    Limits the amount of data processed per run to prevent timeout.
     """
     if not REDIS_ENABLED:
         return
@@ -36,8 +37,13 @@ def sync_usage_updates_to_db():
         return
     
     try:
-        # Get all pending usage updates from Redis
-        pending_updates = get_pending_usage_updates()
+        # Limit processing to prevent job from taking too long
+        # Process in batches to ensure job completes within interval
+        MAX_UPDATES_PER_RUN = 10000  # Limit updates per sync
+        MAX_SNAPSHOTS_PER_RUN = 5000  # Limit snapshots per sync
+        
+        # Get pending usage updates from Redis (limited)
+        pending_updates = get_pending_usage_updates(max_items=MAX_UPDATES_PER_RUN)
         
         if not pending_updates:
             return
@@ -161,8 +167,8 @@ def sync_usage_updates_to_db():
             from app.redis.pending_backup import clear_service_usage_backup
             clear_service_usage_backup()
         
-        # Sync usage snapshots (user_node_usage and node_usage)
-        snapshots_synced = _sync_usage_snapshots(redis_client)
+        # Sync usage snapshots (user_node_usage and node_usage) - limited batch
+        snapshots_synced = _sync_usage_snapshots(redis_client, max_snapshots=MAX_SNAPSHOTS_PER_RUN)
         if snapshots_synced:
             from app.redis.pending_backup import clear_usage_snapshots_backup
             clear_usage_snapshots_backup()
@@ -252,14 +258,18 @@ def _sync_service_usage_updates(redis_client):
     return False
 
 
-def _sync_usage_snapshots(redis_client):
-    """Sync usage snapshots (user_node_usage and node_usage) from Redis to DB. Returns True if synced successfully."""
+def _sync_usage_snapshots(redis_client, max_snapshots: Optional[int] = None):
+    """Sync usage snapshots (user_node_usage and node_usage) from Redis to DB. Returns True if synced successfully.
+    
+    Args:
+        max_snapshots: Maximum number of snapshots to process per type (None = all)
+    """
     try:
         from app.db.models import NodeUserUsage, NodeUsage
         from datetime import datetime
         import json
         
-        user_snapshots, node_snapshots = get_pending_usage_snapshots()
+        user_snapshots, node_snapshots = get_pending_usage_snapshots(max_items=max_snapshots)
         
         if user_snapshots or node_snapshots:
             with GetDB() as db:
@@ -279,24 +289,32 @@ def _sync_usage_snapshots(redis_client):
                         except Exception:
                             continue
                 
-                # Insert/update user_node_usage
-                for (user_id, node_id, created_at), total_traffic in user_snapshot_groups.items():
-                    # Check if record exists
-                    existing = db.query(NodeUserUsage).filter(
-                        NodeUserUsage.user_id == user_id,
-                        NodeUserUsage.node_id == node_id,
-                        NodeUserUsage.created_at == created_at
-                    ).first()
+                # Insert/update user_node_usage in batch using bulk operations
+                if user_snapshot_groups:
+                    # Fetch existing records in batch
+                    snapshot_keys = list(user_snapshot_groups.keys())
+                    existing_records = {}
+                    for user_id, node_id, created_at in snapshot_keys:
+                        existing = db.query(NodeUserUsage).filter(
+                            NodeUserUsage.user_id == user_id,
+                            NodeUserUsage.node_id == node_id,
+                            NodeUserUsage.created_at == created_at
+                        ).first()
+                        if existing:
+                            existing_records[(user_id, node_id, created_at)] = existing
                     
-                    if existing:
-                        existing.used_traffic = (existing.used_traffic or 0) + total_traffic
-                    else:
-                        db.add(NodeUserUsage(
-                            user_id=user_id,
-                            node_id=node_id,
-                            created_at=created_at,
-                            used_traffic=total_traffic
-                        ))
+                    # Update existing or insert new
+                    for (user_id, node_id, created_at), total_traffic in user_snapshot_groups.items():
+                        key = (user_id, node_id, created_at)
+                        if key in existing_records:
+                            existing_records[key].used_traffic = (existing_records[key].used_traffic or 0) + total_traffic
+                        else:
+                            db.add(NodeUserUsage(
+                                user_id=user_id,
+                                node_id=node_id,
+                                created_at=created_at,
+                                used_traffic=total_traffic
+                            ))
                 
                 # Group node snapshots by (node_id, created_at)
                 node_snapshot_groups = defaultdict(lambda: {'uplink': 0, 'downlink': 0})
@@ -315,24 +333,32 @@ def _sync_usage_snapshots(redis_client):
                         except Exception:
                             continue
                 
-                # Insert/update node_usage
-                for (node_id, created_at), traffic in node_snapshot_groups.items():
-                    # Check if record exists
-                    existing = db.query(NodeUsage).filter(
-                        NodeUsage.node_id == node_id,
-                        NodeUsage.created_at == created_at
-                    ).first()
+                # Insert/update node_usage in batch
+                if node_snapshot_groups:
+                    # Fetch existing records in batch
+                    node_keys = list(node_snapshot_groups.keys())
+                    existing_node_records = {}
+                    for node_id, created_at in node_keys:
+                        existing = db.query(NodeUsage).filter(
+                            NodeUsage.node_id == node_id,
+                            NodeUsage.created_at == created_at
+                        ).first()
+                        if existing:
+                            existing_node_records[(node_id, created_at)] = existing
                     
-                    if existing:
-                        existing.uplink = (existing.uplink or 0) + traffic['uplink']
-                        existing.downlink = (existing.downlink or 0) + traffic['downlink']
-                    else:
-                        db.add(NodeUsage(
-                            node_id=node_id,
-                            created_at=created_at,
-                            uplink=traffic['uplink'],
-                            downlink=traffic['downlink']
-                        ))
+                    # Update existing or insert new
+                    for (node_id, created_at), traffic in node_snapshot_groups.items():
+                        key = (node_id, created_at)
+                        if key in existing_node_records:
+                            existing_node_records[key].uplink = (existing_node_records[key].uplink or 0) + traffic['uplink']
+                            existing_node_records[key].downlink = (existing_node_records[key].downlink or 0) + traffic['downlink']
+                        else:
+                            db.add(NodeUsage(
+                                node_id=node_id,
+                                created_at=created_at,
+                                uplink=traffic['uplink'],
+                                downlink=traffic['downlink']
+                            ))
                 
                 db.commit()
                 logger.info(f"Synced {len(user_snapshot_groups)} user usage snapshots and {len(node_snapshot_groups)} node usage snapshots from Redis to database")

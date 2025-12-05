@@ -6,13 +6,15 @@ const twemoji = twemojiModule as typeof twemojiModule & {
   test?: (value: string) => boolean;
 };
 
-const APPLE_BASE = "https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.1/img/";
+// Use Twemoji CDN which has complete emoji support (all Unicode emojis)
+const TWEMOJI_BASE = "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/";
 
 const EMOJI_OPTIONS = {
-  base: APPLE_BASE,
-  folder: "apple/64",
+  base: TWEMOJI_BASE,
+  folder: "72x72",
   ext: ".png",
-  className: "apple-emoji",
+  className: "twemoji-emoji",
+  size: "72x72",
 };
 
 const hasEmoji = (value: string | null | undefined) =>

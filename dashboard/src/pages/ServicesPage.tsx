@@ -498,7 +498,8 @@ const ServiceDialog: FC<ServiceDialogProps> = ({
 };
 
 const ServicesPage: FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRTL = i18n.language === "fa";
   const toast = useToast();
   const { userData, getUserIsSuccess } = useGetUser();
   const canManageServices =
@@ -865,8 +866,8 @@ const ServicesPage: FC = () => {
     </AccordionItem>
   );
 
-  const renderServiceRow = (service: ServiceSummary) => (
-    <Tr key={service.id}>
+  const renderServiceRow = (service: ServiceSummary, index: number) => (
+    <Tr key={service.id} className={index === servicesStore.services.length - 1 ? "last-row" : undefined}>
       <Td>
         <VStack align="start" spacing={0}>
           <Text fontWeight="semibold">{service.name}</Text>
@@ -1020,7 +1021,7 @@ const ServicesPage: FC = () => {
                       <Th>{t("services.columns.actions", "Actions")}</Th>
                     </Tr>
                   </Thead>
-                  <Tbody>{servicesStore.services.map(renderServiceRow)}</Tbody>
+                  <Tbody>{servicesStore.services.map((service, index) => renderServiceRow(service, index))}</Tbody>
                 </Table>
               </Box>
             </>

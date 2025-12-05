@@ -166,19 +166,23 @@ export const AppSidebar: FC<AppSidebarProps> = ({ collapsed, inDrawer = false, o
     });
   }
 
+  const isRTL = currentLanguage === "fa";
+
   return (
     <Box
       w={inDrawer ? "full" : collapsed ? "16" : "60"}
       h={inDrawer ? "100%" : "100vh"}
       maxH={inDrawer ? "100%" : "100vh"}
       bg="surface.light"
-      borderRight={inDrawer ? undefined : "1px"}
+      borderRight={inDrawer || isRTL ? undefined : "1px"}
+      borderLeft={inDrawer || !isRTL ? undefined : "1px"}
       borderColor={inDrawer ? undefined : "light-border"}
       _dark={{ bg: "surface.dark", borderColor: inDrawer ? undefined : "whiteAlpha.200" }}
       transition="width 0.3s"
       position={inDrawer ? "relative" : "fixed"}
       top={inDrawer ? undefined : "0"}
-      left={inDrawer ? undefined : "0"}
+      left={inDrawer || isRTL ? undefined : "0"}
+      right={inDrawer || !isRTL ? undefined : "0"}
       overflowY="auto"
       overflowX="hidden"
       flexShrink={0}
@@ -370,7 +374,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({ collapsed, inDrawer = false, o
                   color="gray.500"
                   _dark={{ color: "gray.500" }}
                 >
-                  username:
+                  {t("sidebar.username", "username:")}
                 </Text>
                 <Text
                   fontSize="sm"

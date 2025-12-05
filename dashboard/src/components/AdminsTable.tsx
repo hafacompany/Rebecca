@@ -163,9 +163,10 @@ const AdminUsageSlider: FC<AdminUsageSliderProps> = (props) => {
 };
 
 export const AdminsTable = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const toast = useToast();
   const { userData } = useGetUser();
+  const isRTL = i18n.language === "fa";
   const rowHoverBg = useColorModeValue("gray.50", "whiteAlpha.100");
   const rowSelectedBg = useColorModeValue("primary.50", "primary.900");
   const tableBg = useColorModeValue("white", "gray.900");
@@ -383,14 +384,24 @@ export const AdminsTable = () => {
   const columns = useMemo(
     () => [
       { key: "id", label: "ID" },
-      { key: "username", label: t("username") },
       { key: "status", label: t("status") },
       { key: "users_count", label: t("users") },
       { key: "data", label: t("dataUsage") + " / " + t("dataLimit") },
       { key: "actions", label: "" },
+      { key: "username", label: t("username") },
     ],
     [t]
   );
+  const rtlTableProps = isRTL
+    ? {
+        className: "rb-rtl-table",
+        dir: "ltr" as const,
+        sx: {
+          "& th": { textAlign: "right" },
+          "& td": { textAlign: "right" },
+        },
+      }
+    : {};
 
   if (loading && !admins.length) {
     return (
@@ -427,7 +438,7 @@ export const AdminsTable = () => {
         bg={tableBg}
         borderColor={tableBorderColor}
       >
-        <Table variant="simple" size="sm" minW={{ base: "100%", md: "800px" }}>
+        <Table variant="simple" size="sm" minW={{ base: "100%", md: "800px" }} {...rtlTableProps}>
           <Thead bg={tableHeaderBg} color={tableHeaderTextColor}>
             <Tr>
               {columns.map((col) => (
@@ -443,7 +454,15 @@ export const AdminsTable = () => {
                       ? "pointer"
                       : "default"
                   }
-                  textAlign={col.key === "actions" ? "right" : col.key === "id" ? "center" : "left"}
+                  textAlign={
+                    col.key === "actions"
+                      ? "right"
+                      : col.key === "id"
+                      ? "center"
+                      : isRTL
+                      ? "right"
+                      : "left"
+                  }
                   display={{ base: col.key === "id" ? "none" : "table-cell", md: "table-cell" }}
                   px={col.key === "id" ? 2 : undefined}
                   pr={col.key === "id" ? 1 : undefined}
@@ -480,7 +499,7 @@ export const AdminsTable = () => {
             </Tr>
           </Thead>
           <Tbody>
-            {admins.map((admin) => {
+            {admins.map((admin, index) => {
               const isSelected = adminInDetails?.username === admin.username;
               const usersLimitLabel =
                 admin.users_limit && admin.users_limit > 0
@@ -508,6 +527,7 @@ export const AdminsTable = () => {
               return (
                 <Tr
                   key={admin.username}
+                  className={index === admins.length - 1 ? "last-row" : undefined}
                   onClick={() => openAdminDetails(admin)}
                   cursor="pointer"
                   bg={isSelected ? rowSelectedBg : undefined}
@@ -531,56 +551,6 @@ export const AdminsTable = () => {
                       {admin.id}
                     </Text>
                   </Td>
-                  <Td px={2}>
-                    <Tooltip
-                      label={
-                        admin.role === AdminRole.FullAccess
-                          ? t("admins.roles.fullAccess", "Full access")
-                          : admin.role === AdminRole.Sudo
-                          ? t("admins.roles.sudo", "Sudo")
-                          : t("admins.roles.standard", "Standard")
-                      }
-                      placement="top"
-                    >
-                      <Text
-                        fontWeight="medium"
-                        px={2}
-                        py={1}
-                        borderRadius="md"
-                        bg={
-                          admin.role === AdminRole.FullAccess
-                            ? "yellow.100"
-                            : admin.role === AdminRole.Sudo
-                            ? "purple.100"
-                            : "gray.100"
-                        }
-                        color={
-                          admin.role === AdminRole.FullAccess
-                            ? "yellow.800"
-                            : admin.role === AdminRole.Sudo
-                            ? "purple.800"
-                            : "gray.800"
-                        }
-                        _dark={{
-                          bg:
-                            admin.role === AdminRole.FullAccess
-                              ? "yellow.900"
-                              : admin.role === AdminRole.Sudo
-                              ? "purple.900"
-                              : "gray.700",
-                          color:
-                            admin.role === AdminRole.FullAccess
-                              ? "yellow.200"
-                              : admin.role === AdminRole.Sudo
-                              ? "purple.200"
-                              : "gray.200",
-                        }}
-                        display="inline-block"
-                      >
-                        {admin.username}
-                      </Text>
-                    </Tooltip>
-                  </Td>
                   <Td>
                     <Stack spacing={1} align="flex-start" maxW="full">
                       <AdminStatusBadge status={admin.status} />
@@ -592,19 +562,14 @@ export const AdminsTable = () => {
                     </Stack>
                   </Td>
                   <Td>
-                    <Stack spacing={0}>
+                    <Stack spacing={0} align="flex-start">
                       <Text fontSize="xs" fontWeight="semibold">
                         {activeLabel}
                       </Text>
                       {admin.online_users !== null && admin.online_users !== undefined && (
-                        <HStack spacing={1} mt={1}>
-                          <Text fontSize="xs" color="green.600" _dark={{ color: "green.400" }}>
-                            {t("admins.details.onlineLabel", "Online")}:
-                          </Text>
-                          <Text fontSize="xs" fontWeight="semibold" color="green.600" _dark={{ color: "green.400" }}>
-                            {admin.online_users}
-                          </Text>
-                        </HStack>
+                        <Text fontSize="xs" color="green.600" _dark={{ color: "green.400" }} mt={1}>
+                          {t("admins.details.onlineLabel", "Online")}: {admin.online_users}
+                        </Text>
                       )}
                     </Stack>
                   </Td>
@@ -708,6 +673,56 @@ export const AdminsTable = () => {
                         )}
                       </MenuList>
                     </Menu>
+                  </Td>
+                  <Td px={2}>
+                    <Tooltip
+                      label={
+                        admin.role === AdminRole.FullAccess
+                          ? t("admins.roles.fullAccess", "Full access")
+                          : admin.role === AdminRole.Sudo
+                          ? t("admins.roles.sudo", "Sudo")
+                          : t("admins.roles.standard", "Standard")
+                      }
+                      placement="top"
+                    >
+                      <Text
+                        fontWeight="medium"
+                        px={2}
+                        py={1}
+                        borderRadius="md"
+                        bg={
+                          admin.role === AdminRole.FullAccess
+                            ? "yellow.100"
+                            : admin.role === AdminRole.Sudo
+                            ? "purple.100"
+                            : "gray.100"
+                        }
+                        color={
+                          admin.role === AdminRole.FullAccess
+                            ? "yellow.800"
+                            : admin.role === AdminRole.Sudo
+                            ? "purple.800"
+                            : "gray.800"
+                        }
+                        _dark={{
+                          bg:
+                            admin.role === AdminRole.FullAccess
+                              ? "yellow.900"
+                              : admin.role === AdminRole.Sudo
+                              ? "purple.900"
+                              : "gray.700",
+                          color:
+                            admin.role === AdminRole.FullAccess
+                              ? "yellow.200"
+                              : admin.role === AdminRole.Sudo
+                              ? "purple.200"
+                              : "gray.200",
+                        }}
+                        display="inline-block"
+                      >
+                        {admin.username}
+                      </Text>
+                    </Tooltip>
                   </Td>
                 </Tr>
               );

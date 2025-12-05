@@ -195,6 +195,16 @@ def create_service(
     if not service:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Service not available")
     xray.hosts.update()
+    
+    # Update Redis cache
+    from config import REDIS_ENABLED
+    if REDIS_ENABLED:
+        try:
+            from app.redis.cache import invalidate_service_host_map_cache
+            invalidate_service_host_map_cache()
+        except Exception:
+            pass  # Don't fail if Redis is unavailable
+    
     return _service_to_detail(db, service)
 
 
@@ -243,6 +253,16 @@ def modify_service(
     db.refresh(service)
     if hosts_modified:
         xray.hosts.update()
+        
+        # Update Redis cache
+        from config import REDIS_ENABLED
+        if REDIS_ENABLED:
+            try:
+                from app.redis.cache import invalidate_service_host_map_cache
+                invalidate_service_host_map_cache()
+            except Exception:
+                pass  # Don't fail if Redis is unavailable
+    
     return _service_to_detail(db, service)
 
 
@@ -283,6 +303,15 @@ def delete_service(
     for dbuser in transferred_users:
         core_operations.update_user(dbuser=dbuser)
     xray.hosts.update()
+    
+    # Update Redis cache
+    from config import REDIS_ENABLED
+    if REDIS_ENABLED:
+        try:
+            from app.redis.cache import invalidate_service_host_map_cache
+            invalidate_service_host_map_cache()
+        except Exception:
+            pass  # Don't fail if Redis is unavailable
 
 
 @router.post("/{service_id}/reset-usage", response_model=ServiceDetail)
