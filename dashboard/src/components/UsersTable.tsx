@@ -615,58 +615,97 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
         <Thead position="relative" zIndex="docked">
           <Tr>
             <Th
+              minW="140px"
+              cursor={"pointer"}
+              onClick={handleSort.bind(null, "username")}
+              textAlign={isRTL ? "right" : "left"}
+            >
+              <HStack direction={isRTL ? "row-reverse" : "row"} justify={isRTL ? "flex-end" : "flex-start"}>
+                <span>{t("username")}</span>
+                <Sort sort={filters.sort} column="username" />
+              </HStack>
+            </Th>
+            <Th
               width="400px"
               minW="150px"
               cursor={"pointer"}
+              textAlign={isRTL ? "right" : "left"}
             >
-              <HStack position="relative" gap={"5px"} direction="row">
-                <Text
-                  _dark={{
-                    bg: "gray.750",
-                  }}
-                  _light={{
-                    bg: "#F9FAFB",
-                  }}
-                  userSelect="none"
-                  pointerEvents="none"
-                  zIndex={1}
-                >
-                  {t("usersTable.status")}
-                  {filters.status ? ": " + filters.status : ""}
-                </Text>
-                <Text>/</Text>
-                <Sort sort={filters.sort} column="expire" />
-                <HStack onClick={handleSort.bind(null, "expire")}>
-                  <Text>{t("usersTable.sortByExpire", "Sort by expire")}</Text>
-                </HStack>
-              </HStack>
-              <Select
-                fontSize="xs"
-                fontWeight="extrabold"
-                textTransform="uppercase"
-                cursor="pointer"
-                position={"absolute"}
-                p={0}
-                left="-40px"
-                border={0}
-                h="auto"
-                w="auto"
-                icon={<></>}
-                _focusVisible={{
+              <HStack position="relative" gap={"5px"} direction={isRTL ? "row-reverse" : "row"}>
+                {isRTL ? (
+                  <>
+                    <Text
+                      _dark={{
+                        bg: "gray.750",
+                      }}
+                      _light={{
+                        bg: "#F9FAFB",
+                      }}
+                      userSelect="none"
+                      pointerEvents="none"
+                      zIndex={1}
+                    >
+                      {t("usersTable.status")}
+                      {filters.status ? ": " + filters.status : ""}
+                    </Text>
+                    <Text>/</Text>
+                    <HStack onClick={handleSort.bind(null, "expire")}>
+                      <Text>{t("usersTable.sortByExpire", "Sort by expire")}</Text>
+                    </HStack>
+                    <Sort sort={filters.sort} column="expire" />
+                  </>
+                ) : (
+                  <>
+                    <Text
+                      _dark={{
+                        bg: "gray.750",
+                      }}
+                      _light={{
+                        bg: "#F9FAFB",
+                      }}
+                      userSelect="none"
+                      pointerEvents="none"
+                      zIndex={1}
+                    >
+                      {t("usersTable.status")}
+                      {filters.status ? ": " + filters.status : ""}
+                    </Text>
+                    <Text>/</Text>
+                    <Sort sort={filters.sort} column="expire" />
+                    <HStack onClick={handleSort.bind(null, "expire")}>
+                      <Text>{t("usersTable.sortByExpire", "Sort by expire")}</Text>
+                    </HStack>
+                  </>
+                )}
+                <Select
+                  fontSize="xs"
+                  fontWeight="extrabold"
+                  textTransform="uppercase"
+                  cursor="pointer"
+                  position={"absolute"}
+                  p={0}
+                  left={isRTL ? undefined : "-40px"}
+                  right={isRTL ? "-40px" : undefined}
+                  border={0}
+                  h="auto"
+                  w="auto"
+                  icon={<></>}
+                  _focusVisible={{
                     border: "0 !important",
                   }}
                   value={filters.sort}
-                onChange={handleStatusFilter}
-              >
-                <option></option>
-                <option>active</option>
-                <option>on_hold</option>
-                <option>disabled</option>
-                <option>limited</option>
-                <option>expired</option>
-              </Select>
+                  onChange={handleStatusFilter}
+                >
+                  <option></option>
+                  <option>active</option>
+                  <option>on_hold</option>
+                  <option>disabled</option>
+                  <option>limited</option>
+                  <option>expired</option>
+                </Select>
+              </HStack>
             </Th>
-            <Th minW="150px">
+            <Th minW="150px" textAlign={isRTL ? "right" : "left"}>
               <span>{t("usersTable.service", "Service")}</span>
             </Th>
             <Th
@@ -674,8 +713,9 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
               minW="230px"
               cursor={"pointer"}
               onClick={handleSort.bind(null, "used_traffic")}
+              textAlign={isRTL ? "right" : "left"}
             >
-              <HStack direction="row" justify="flex-start">
+              <HStack direction={isRTL ? "row-reverse" : "row"} justify={isRTL ? "flex-end" : "flex-start"}>
                 <span>{t("usersTable.dataUsage")}</span>
                 <Sort sort={filters.sort} column="used_traffic" />
               </HStack>
@@ -684,17 +724,8 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
               width="200px"
               minW="180px"
               data-actions="true"
+              textAlign={isRTL ? "left" : "right"}
             />
-            <Th
-              minW="140px"
-              cursor={"pointer"}
-              onClick={handleSort.bind(null, "username")}
-            >
-              <HStack direction="row" justify="flex-start">
-                <span>{t("username")}</span>
-                <Sort sort={filters.sort} column="username" />
-              </HStack>
-            </Th>
           </Tr>
         </Thead>
         <Tbody>
@@ -733,13 +764,20 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                       }}
                       cursor={canCreateUsers ? "pointer" : "default"}
                     >
-                      <Td width="400px" minW="150px">
+                      <Td minW="140px" textAlign={isRTL ? "right" : "left"}>
+                        <div className="flex-status">
+                          <OnlineBadge lastOnline={user.online_at} />
+                          {user.username}
+                          <OnlineStatus lastOnline={user.online_at} />
+                        </div>
+                      </Td>
+                      <Td width="400px" minW="150px" textAlign={isRTL ? "right" : "left"}>
                         <StatusBadge
                           expiryDate={user.expire}
                           status={user.status}
                         />
                       </Td>
-                      <Td minW="150px">
+                      <Td minW="150px" textAlign={isRTL ? "right" : "left"}>
                         <Text
                           fontSize="sm"
                           color={user.service_name ? "gray.700" : "gray.500"}
@@ -750,7 +788,7 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                             t("usersTable.defaultService", "Default")}
                         </Text>
                       </Td>
-                      <Td width="350px" minW="230px">
+                      <Td width="350px" minW="230px" textAlign={isRTL ? "right" : "left"}>
                         <UsageSlider
                           totalUsedTraffic={user.lifetime_used_traffic}
                           dataLimitResetStrategy={user.data_limit_reset_strategy}
@@ -759,15 +797,8 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                           colorScheme={statusColors[user.status].bandWidthColor}
                         />
                       </Td>
-                      <Td width="200px" minW="180px" data-actions="true">
+                      <Td width="200px" minW="180px" data-actions="true" textAlign={isRTL ? "left" : "right"}>
                         <ActionButtons user={user} />
-                      </Td>
-                      <Td minW="140px">
-                        <div className="flex-status">
-                          <OnlineBadge lastOnline={user.online_at} />
-                          {user.username}
-                          <OnlineStatus lastOnline={user.online_at} />
-                        </div>
                       </Td>
                     </Tr>
                   );
