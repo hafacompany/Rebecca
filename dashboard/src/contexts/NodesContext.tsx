@@ -36,6 +36,13 @@ export const NodeSchema = z.object({
   downlink: z.number().nullable().optional(),
   use_nobetci: z.boolean().optional(),
   nobetci_port: z.number().nullable().optional(),
+  certificate: z.string().optional(),
+  certificate_key: z.string().optional(),
+  certificate_token: z.string().optional(),
+  has_custom_certificate: z.boolean().optional(),
+  uses_default_certificate: z.boolean().optional(),
+  certificate_public_key: z.string().nullable().optional(),
+  node_certificate: z.string().nullable().optional(),
 });
 
 export type NodeType = z.infer<typeof NodeSchema>;
@@ -59,10 +66,11 @@ export const FetchNodesQueryKey = "fetch-nodes-query-key";
 
 export type NodeStore = {
   nodes: NodeType[];
-  addNode: (node: NodeType) => Promise<unknown>;
+  addNode: (node: NodeType) => Promise<NodeType>;
   fetchNodes: () => Promise<NodeType[]>;
   fetchNodesUsage: (query: FilterUsageType) => Promise<any>;
-  updateNode: (node: NodeType) => Promise<unknown>;
+  updateNode: (node: NodeType) => Promise<NodeType>;
+  regenerateNodeCertificate: (node: NodeType) => Promise<NodeType>;
   reconnectNode: (node: NodeType) => Promise<unknown>;
   restartNodeService: (node: NodeType) => Promise<unknown>;
   updateNodeService: (node: NodeType) => Promise<unknown>;
@@ -88,18 +96,23 @@ export const useNodesQuery = (options?: { enabled?: boolean }) => {
 export const useNodes = create<NodeStore>((set, get) => ({
   nodes: [],
   addNode(body) {
-    return fetch("/node", { method: "POST", body });
+    return fetch<NodeType>("/node", { method: "POST", body });
   },
   fetchNodes() {
-    return fetch("/nodes");
+    return fetch<NodeType[]>("/nodes");
   },
   fetchNodesUsage(query: FilterUsageType) {
     return fetch("/nodes/usage", { query });
   },
   updateNode(body) {
-    return fetch(`/node/${body.id}`, {
+    return fetch<NodeType>(`/node/${body.id}`, {
       method: "PUT",
       body,
+    });
+  },
+  regenerateNodeCertificate(body) {
+    return fetch<NodeType>(`/node/${body.id}/certificate/regenerate`, {
+      method: "POST",
     });
   },
   setDeletingNode(node) {

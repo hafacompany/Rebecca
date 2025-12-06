@@ -99,12 +99,43 @@ def get_nodes(db: Session, status: Optional[Union[NodeStatus, list]] = None,
 
 def create_node(db: Session, node: NodeCreate) -> Node:
     """Creates a new node in the database."""
+    from app.utils.crypto import generate_certificate, generate_unique_cn
+    
     dbnode = Node(name=node.name, address=node.address, port=node.port, api_port=node.api_port,
                   usage_coefficient=node.usage_coefficient if getattr(node, "usage_coefficient", None) else 1,
                   data_limit=node.data_limit if getattr(node, "data_limit", None) is not None else None,
                   geo_mode=node.geo_mode, use_nobetci=bool(getattr(node, "use_nobetci", False)),
                   nobetci_port=getattr(node, "nobetci_port", None) or None)
     db.add(dbnode)
+    db.flush()
+    
+    # Use provided certificate when available (from fresh node-settings), otherwise generate a unique one
+    provided_cert = getattr(node, "certificate", None)
+    provided_key = getattr(node, "certificate_key", None)
+    if provided_cert and provided_key:
+        dbnode.certificate = provided_cert
+        dbnode.certificate_key = provided_key
+    else:
+        unique_cn = generate_unique_cn(node_id=dbnode.id, node_name=node.name)
+        cert_data = generate_certificate(cn=unique_cn)
+        dbnode.certificate = cert_data["cert"]
+        dbnode.certificate_key = cert_data["key"]
+    
+    db.commit()
+    db.refresh(dbnode)
+    return dbnode
+
+
+def regenerate_node_certificate(db: Session, dbnode: Node) -> Node:
+    """
+    Generate and persist a new unique certificate for an existing node.
+    """
+    from app.utils.crypto import generate_certificate, generate_unique_cn
+
+    unique_cn = generate_unique_cn(node_id=dbnode.id, node_name=dbnode.name)
+    cert_data = generate_certificate(cn=unique_cn)
+    dbnode.certificate = cert_data["cert"]
+    dbnode.certificate_key = cert_data["key"]
     db.commit()
     db.refresh(dbnode)
     return dbnode

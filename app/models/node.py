@@ -23,6 +23,8 @@ class GeoMode(str, Enum):
 class NodeSettings(BaseModel):
     min_node_version: str = "v0.2.0"
     certificate: str
+    node_certificate: Optional[str] = None
+    node_certificate_key: Optional[str] = None
 
 
 def validate_address(value: str) -> str:
@@ -68,6 +70,10 @@ class Node(BaseModel):
 class NodeCreate(Node):
     add_as_new_host: bool = True
     geo_mode: GeoMode = GeoMode.default
+    # Optional per-node certificate pair; when omitted, the backend will generate one
+    certificate: Optional[str] = None
+    certificate_key: Optional[str] = None
+    certificate_token: Optional[str] = None
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -118,6 +124,10 @@ class NodeResponse(Node):
     geo_mode: GeoMode
     uplink: int = 0
     downlink: int = 0
+    has_custom_certificate: bool = False
+    uses_default_certificate: bool = False
+    certificate_public_key: Optional[str] = None
+    node_certificate: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -29,9 +29,20 @@ if TYPE_CHECKING:
 
 
 @lru_cache(maxsize=None)
-def get_tls():
+def get_tls(node_id: int = None):
+
     from app.db import GetDB, get_tls_certificate
     with GetDB() as db:
+        # Check if node has its own certificate
+        if node_id:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if dbnode and dbnode.certificate and dbnode.certificate_key:
+                return {
+                    "key": dbnode.certificate_key,
+                    "certificate": dbnode.certificate
+                }
+        
+        # Fall back to default TLS certificate
         tls = get_tls_certificate(db)
         return {
             "key": tls.key,
@@ -356,7 +367,7 @@ def remove_node(node_id: int):
 def add_node(dbnode: "DBNode"):
     remove_node(dbnode.id)
 
-    tls = get_tls()
+    tls = get_tls(node_id=dbnode.id)
     state.nodes[dbnode.id] = XRayNode(address=dbnode.address,
                                      port=dbnode.port,
                                      api_port=dbnode.api_port,

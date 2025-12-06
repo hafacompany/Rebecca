@@ -331,8 +331,9 @@ def _filter_users_in_memory(
             filtered = [u for u in filtered if u.data_limit_reset_strategy and u.data_limit_reset_strategy.value == strategy_value]
     
     # Filter by admin
-    if admin:
-        filtered = [u for u in filtered if u.admin_id == admin.id]
+    if admin and hasattr(admin, 'id') and admin.id is not None:
+        admin_id = int(admin.id)
+        filtered = [u for u in filtered if u.admin_id is not None and int(u.admin_id) == admin_id]
     
     # Filter by admins
     if admins:
@@ -529,8 +530,8 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
             else:
                 query = query.filter(User.data_limit_reset_strategy == reset_strategy)
 
-        if admin:
-            query = query.filter(User.admin == admin)
+        if admin and hasattr(admin, 'id') and admin.id is not None:
+            query = query.filter(User.admin_id == admin.id)
 
         if admins:
             query = query.filter(User.admin.has(Admin.username.in_(admins)))

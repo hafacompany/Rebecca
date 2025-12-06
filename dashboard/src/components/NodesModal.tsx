@@ -8,6 +8,7 @@ import {
   ModalFooter,
   VStack,
   HStack,
+  Box,
   FormControl,
   FormLabel,
   Checkbox,
@@ -21,13 +22,17 @@ import {
   InputGroup,
   InputRightAddon,
   FormErrorMessage,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
 } from "@chakra-ui/react";
 import { EyeIcon, EyeSlashIcon } from "@heroicons/react/24/outline";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FC, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "react-query";
+import { useMutation } from "react-query";
 import { fetch } from "service/http";
 import { NodeSchema, getNodeDefaultValues } from "contexts/NodesContext";
 import { Input } from "./Input";
@@ -94,18 +99,24 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
   const { t } = useTranslation();
   const toast = useToast();
   const [showCertificate, setShowCertificate] = useState(false);
+  const [showPublicKey, setShowPublicKey] = useState(false);
   const [dataLimitInput, setDataLimitInput] = useState("");
   const [dataLimitError, setDataLimitError] = useState<string | undefined>(undefined);
-
-  const { data: nodeSettings, isLoading: nodeSettingsLoading } = useQuery({
-    queryKey: "node-settings",
-    queryFn: () => fetch<{ min_node_version: string; certificate: string }>("/node/settings"),
-  });
 
   const form = useForm({
     resolver: zodResolver(NodeSchema),
     defaultValues: isAddMode ? { ...getNodeDefaultValues(), add_as_new_host: false } : node,
   });
+
+  const certificateToUse = !isAddMode ? node?.node_certificate : undefined;
+  const publicKeyToShow = null;
+  const nodeCertificateToShow = !isAddMode ? node?.node_certificate : undefined;
+  const privateKeyToShow = null;
+
+  const handleCopyCertificate = (value?: string | null) => {
+    if (!value) return;
+    navigator?.clipboard?.writeText?.(value).catch(() => {});
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -114,9 +125,13 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
     if (isAddMode) {
       form.reset({ ...getNodeDefaultValues(), add_as_new_host: false });
       setDataLimitInput("");
+      setShowCertificate(false);
     } else if (node) {
       form.reset(node);
       setDataLimitInput(formatDataLimitInput(node?.data_limit ?? null));
+      if (node?.node_certificate) {
+        setShowCertificate(true);
+      }
     }
     setDataLimitError(undefined);
   }, [isAddMode, isOpen, node, form]);
@@ -133,6 +148,8 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
       ...data,
       data_limit: parsedLimit,
     };
+
+    // Certificate is generated server-side after creation/regeneration
     
     mutate(submitData);
   });
@@ -167,7 +184,22 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
         <ModalBody>
           <form onSubmit={handleSubmit}>
             <VStack spacing={4}>
-              {isAddMode && nodeSettings?.certificate && (
+              {!isAddMode && node?.uses_default_certificate && (
+                <Alert status="warning" borderRadius="md" alignItems="flex-start">
+                  <AlertIcon />
+                  <AlertTitle fontSize="sm">
+                    {t("nodes.legacyCertTitle", "This node uses the legacy shared certificate")}
+                  </AlertTitle>
+                  <AlertDescription fontSize="xs">
+                    {t(
+                      "nodes.legacyCertDesc",
+                      "Regenerate or add a new node to switch it to a private certificate."
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {!isAddMode && nodeCertificateToShow && (
                 <VStack w="full" spacing={2}>
                   <Collapse in={showCertificate} animateOpacity style={{ width: "100%" }}>
                     <Text
@@ -182,21 +214,30 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
                       overflow="auto"
                       onClick={(e) => selectText(e.target as HTMLElement)}
                     >
-                      {nodeSettings.certificate}
+                      {nodeCertificateToShow}
                     </Text>
                   </Collapse>
-                  <HStack justify="end" py={2} w="full">
-                    <Button
-                      as="a"
-                      colorScheme="primary"
-                      size="xs"
-                      download="ssl_client_cert.pem"
-                      href={URL.createObjectURL(
-                        new Blob([nodeSettings.certificate], { type: "text/plain" })
-                      )}
-                    >
-                      {t("nodes.download-certificate")}
-                    </Button>
+                  <HStack justify="space-between" py={2} w="full">
+                    <HStack>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => handleCopyCertificate(nodeCertificateToShow)}
+                      >
+                        {t("copy", "Copy")}
+                      </Button>
+                      <Button
+                        as="a"
+                        size="xs"
+                        colorScheme="primary"
+                        download="node_certificate.pem"
+                        href={URL.createObjectURL(
+                          new Blob([nodeCertificateToShow], { type: "text/plain" })
+                        )}
+                      >
+                        {t("nodes.download-node-certificate", "Download certificate")}
+                      </Button>
+                    </HStack>
                     <Tooltip
                       placement="top"
                       label={t(

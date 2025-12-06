@@ -12,6 +12,13 @@ import {
   Button,
   ButtonGroup,
   chakra,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  ModalCloseButton,
   Divider,
   HStack,
   IconButton,
@@ -28,6 +35,7 @@ import {
   Tooltip,
   VStack,
   useDisclosure,
+  useClipboard,
   useToast,
 } from "@chakra-ui/react";
 import {
@@ -35,6 +43,8 @@ import {
   TrashIcon as DeleteIcon,
   PencilIcon as EditIcon,
   ArrowPathIcon,
+  DocumentDuplicateIcon,
+  ArrowDownTrayIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
 import { useNodes, useNodesQuery, FetchNodesQueryKey, NodeType } from "contexts/NodesContext";
@@ -68,6 +78,8 @@ const DeleteIconStyled = chakra(DeleteIcon, { baseStyle: { w: 4, h: 4 } });
 const EditIconStyled = chakra(EditIcon, { baseStyle: { w: 4, h: 4 } });
 const ArrowPathIconStyled = chakra(ArrowPathIcon, { baseStyle: { w: 4, h: 4 } });
 const SearchIcon = chakra(MagnifyingGlassIcon, { baseStyle: { w: 4, h: 4 } });
+const CopyIconStyled = chakra(DocumentDuplicateIcon, { baseStyle: { w: 4, h: 4 } });
+const DownloadIconStyled = chakra(ArrowDownTrayIcon, { baseStyle: { w: 4, h: 4 } });
 
 const BYTES_IN_GB = 1024 ** 3;
 
@@ -142,6 +154,7 @@ export const NodesPage: FC = () => {
   const {
     addNode,
     updateNode,
+    regenerateNodeCertificate,
     reconnectNode,
     restartNodeService,
     updateNodeService,
@@ -166,8 +179,14 @@ export const NodesPage: FC = () => {
   const [pendingStatus, setPendingStatus] = useState<Record<number, boolean>>({});
   const [resettingNodeId, setResettingNodeId] = useState<number | null>(null);
   const [resetCandidate, setResetCandidate] = useState<NodeType | null>(null);
+  const [regeneratingNodeId, setRegeneratingNodeId] = useState<number | null>(null);
   const [restartingServiceNodeId, setRestartingServiceNodeId] = useState<number | null>(null);
   const [updatingServiceNodeId, setUpdatingServiceNodeId] = useState<number | null>(null);
+  const [newNodeCertificate, setNewNodeCertificate] = useState<{ certificate: string; name?: string | null } | null>(null);
+  const generatedCertificateValue = newNodeCertificate?.certificate ?? "";
+  const { onCopy: copyGeneratedCertificate, hasCopied: generatedCertificateCopied } = useClipboard(
+    generatedCertificateValue
+  );
   const { isOpen: isResetConfirmOpen, onOpen: openResetConfirm, onClose: closeResetConfirm } = useDisclosure();
   const cancelResetRef = useRef<HTMLButtonElement | null>(null);
   const [masterLimitInput, setMasterLimitInput] = useState<string>("");
@@ -261,11 +280,17 @@ export const NodesPage: FC = () => {
     normalizeVersion(latestNodeVersion) !== normalizeVersion(currentNodeVersion);
 
   const { isLoading: isAdding, mutate: addNodeMutate } = useMutation(addNode, {
-    onSuccess: () => {
+    onSuccess: (createdNode: NodeType) => {
       generateSuccessMessage(t("nodes.addNodeSuccess"), toast);
       queryClient.invalidateQueries(FetchNodesQueryKey);
       refetchNodes();
       setAddNodeOpen(false);
+      if (createdNode?.node_certificate) {
+        setNewNodeCertificate({
+          certificate: createdNode.node_certificate,
+          name: createdNode.name,
+        });
+      }
     },
     onError: (err) => {
       generateErrorMessage(err, toast);
@@ -289,6 +314,35 @@ export const NodesPage: FC = () => {
       setEditingNode(null);
     },
   });
+
+  const { mutate: regenerateNodeCertMutate, isLoading: isRegenerating } = useMutation(
+    regenerateNodeCertificate,
+    {
+      onMutate: (node: NodeType) => {
+        setRegeneratingNodeId(node.id ?? null);
+      },
+      onSuccess: (updatedNode: NodeType) => {
+        generateSuccessMessage(
+          t("nodes.regenerateCertSuccess", "New certificate generated"),
+          toast,
+        );
+        queryClient.invalidateQueries(FetchNodesQueryKey);
+        if (updatedNode?.node_certificate) {
+          setNewNodeCertificate({
+            certificate: updatedNode.node_certificate,
+            name: updatedNode.name,
+          });
+        }
+        setEditingNode(updatedNode);
+      },
+      onError: (err) => {
+        generateErrorMessage(err, toast);
+      },
+      onSettled: () => {
+        setRegeneratingNodeId(null);
+      },
+    },
+  );
 
   const { isLoading: isReconnecting, mutate: reconnect } = useMutation(reconnectNode, {
     onSuccess: () => {
@@ -1273,6 +1327,41 @@ export const NodesPage: FC = () => {
                           )}
                         </Text>
                       )}
+                      {node.uses_default_certificate && (
+                        <Alert
+                          status="warning"
+                          borderRadius="md"
+                          alignItems="flex-start"
+                          gap={3}
+                          textAlign="start"
+                        >
+                          <AlertIcon mt={0.5} />
+                          <Box>
+                            <Text fontWeight="semibold" fontSize="sm" lineHeight="short">
+                              {t("nodes.legacyCertCardTitle", "Legacy shared certificate in use")}
+                            </Text>
+                            <Text fontSize="xs" lineHeight="short">
+                              {t(
+                                "nodes.legacyCertCardDesc",
+                                "Generate a private certificate for this node and reinstall it on the node host."
+                              )}
+                            </Text>
+                            <Button
+                              size="xs"
+                              mt={2}
+                              colorScheme="primary"
+                              onClick={() => nodeId && regenerateNodeCertMutate(node)}
+                              isLoading={
+                                isRegenerating && nodeId != null && regeneratingNodeId === nodeId
+                              }
+                              isDisabled={!nodeId}
+                              alignSelf="flex-start"
+                            >
+                              {t("nodes.generatePrivateCert", "Generate private certificate")}
+                            </Button>
+                          </Box>
+                        </Alert>
+                      )}
                     </Stack>
 
                     <Divider />
@@ -1456,6 +1545,101 @@ export const NodesPage: FC = () => {
         mutate={updateNodeMutate}
         isLoading={isUpdating}
       />
+      {newNodeCertificate && (
+        <Modal isOpen onClose={() => setNewNodeCertificate(null)} size="md">
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>{t("nodes.newNodePublicKeyTitle")}</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <VStack align="stretch" spacing={4}>
+                <Text fontSize="sm" color="gray.600" _dark={{ color: "gray.300" }}>
+                  {t("nodes.newNodePublicKeyDesc")}
+                </Text>
+                <Box borderWidth="1px" borderRadius="lg" overflow="hidden">
+                  <HStack
+                    justify="space-between"
+                    align="center"
+                    px={4}
+                    py={3}
+                    bg="gray.50"
+                    _dark={{ bg: "gray.800" }}
+                  >
+                    <VStack align="flex-start" spacing={0}>
+                      <Text fontWeight="semibold">
+                        {t("nodes.certificateLabel")}
+                      </Text>
+                      {newNodeCertificate.name && (
+                        <Text fontSize="xs" color="gray.500" _dark={{ color: "gray.400" }}>
+                          {newNodeCertificate.name}
+                        </Text>
+                      )}
+                    </VStack>
+                    <HStack spacing={2}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        leftIcon={<CopyIconStyled />}
+                        onClick={() => {
+                          if (!generatedCertificateValue) return;
+                          copyGeneratedCertificate();
+                          toast({
+                            title: t("copied"),
+                            status: "success",
+                            isClosable: true,
+                            position: "top",
+                            duration: 2000,
+                          });
+                        }}
+                        isDisabled={!generatedCertificateValue}
+                      >
+                        {generatedCertificateCopied ? t("copied") : t("copy")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        leftIcon={<DownloadIconStyled />}
+                        onClick={() => {
+                          if (!generatedCertificateValue) return;
+                          const blob = new Blob([generatedCertificateValue], { type: "text/plain" });
+                          const url = URL.createObjectURL(blob);
+                          const anchor = document.createElement("a");
+                          anchor.href = url;
+                          anchor.download = "node_certificate.pem";
+                          anchor.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        isDisabled={!generatedCertificateValue}
+                      >
+                        {t("nodes.download-node-certificate")}
+                      </Button>
+                    </HStack>
+                  </HStack>
+                  <Box
+                    px={4}
+                    py={3}
+                    bg="white"
+                    _dark={{ bg: "gray.900" }}
+                    fontFamily="mono"
+                    fontSize="xs"
+                    whiteSpace="pre-wrap"
+                    wordBreak="break-word"
+                    maxH="280px"
+                    overflow="auto"
+                  >
+                    {generatedCertificateValue}
+                  </Box>
+                </Box>
+              </VStack>
+            </ModalBody>
+            <ModalFooter>
+              <Button onClick={() => setNewNodeCertificate(null)} colorScheme="primary">
+                {t("close", "Close")}
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+      )}
       <DeleteNodeModal deleteCallback={() => queryClient.invalidateQueries(FetchNodesQueryKey)} />
     </VStack>
   );

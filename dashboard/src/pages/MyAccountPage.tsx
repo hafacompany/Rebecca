@@ -306,7 +306,7 @@ export const MyAccountPage: React.FC = () => {
             start: dayjs(range.start).utc().format("YYYY-MM-DDTHH:mm:ss") + "Z",
             end: dayjs(range.end).utc().format("YYYY-MM-DDTHH:mm:ss") + "Z",
           })
-        : Promise.resolve({ node_usages: [] }),
+        : Promise.resolve({ usages: [] }),
     { keepPreviousData: true, enabled: Boolean(username) }
   );
   const mutation = useMutation(changeMyAccountPassword, {
@@ -374,7 +374,15 @@ export const MyAccountPage: React.FC = () => {
     [dailyUsagePoints, t]
   );
 
-  const perNodeUsage: MyAccountNodeUsage[] = nodesData?.node_usages ?? data?.node_usages ?? [];
+  // Map backend response (with uplink/downlink) to frontend format (with used_traffic)
+  const perNodeUsage: MyAccountNodeUsage[] = useMemo(() => {
+    const backendUsages = nodesData?.usages ?? data?.node_usages ?? [];
+    return backendUsages.map((item: any) => ({
+      node_id: item.node_id ?? null,
+      node_name: item.node_name || "Unknown",
+      used_traffic: Number(item.used_traffic ?? (item.uplink ?? 0) + (item.downlink ?? 0)),
+    }));
+  }, [nodesData?.usages, data?.node_usages]);
   const donutLabels = perNodeUsage.map((item: MyAccountNodeUsage) => item.node_name || "Unknown");
   const donutSeries = perNodeUsage.map((item: MyAccountNodeUsage) => item.used_traffic || 0);
   const perNodeTotal = useMemo(

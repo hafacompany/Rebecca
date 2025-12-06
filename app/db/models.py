@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Text,
     String,
     Table,
     UniqueConstraint,
@@ -525,6 +526,8 @@ class Node(Base):
     data_limit = Column(BigInteger, nullable=True, default=None)
     use_nobetci = Column(Boolean, nullable=False, default=False, server_default=text("0"))
     nobetci_port = Column(Integer, nullable=True, default=None)
+    certificate = Column(Text, nullable=True)  # Node-specific certificate (PEM format)
+    certificate_key = Column(Text, nullable=True)  # Node-specific certificate key (PEM format)
 
 
 class MasterNodeState(Base):

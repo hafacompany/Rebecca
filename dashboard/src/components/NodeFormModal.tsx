@@ -30,7 +30,6 @@ import { FC, useState, useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "react-query";
-import { fetch } from "service/http";
 import { getPanelSettings } from "service/settings";
 import { NodeSchema, getNodeDefaultValues, useNodes } from "contexts/NodesContext";
 import { Input } from "./Input";
@@ -73,14 +72,9 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const [showCertificate, setShowCertificate] = useState(isAddMode);
+  const [showCertificate, setShowCertificate] = useState(false);
   const { fetchNodesUsage } = useNodes();
   const [nodeUsage, setNodeUsage] = useState<{ uplink: number; downlink: number } | null>(null);
-
-  const { data: nodeSettings, isLoading: nodeSettingsLoading } = useQuery({
-    queryKey: "node-settings",
-    queryFn: () => fetch<{ min_node_version: string; certificate: string }>("/node/settings"),
-  });
 
   const { data: panelSettings } = useQuery({
     queryKey: "panel-settings",
@@ -121,8 +115,10 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
     },
   });
 
-  const certificateValue = nodeSettings?.certificate ?? "";
-  const { onCopy: copyCertificate, hasCopied: certificateCopied } = useClipboard(certificateValue);
+  const nodeCertificateValue = (!isAddMode && node?.node_certificate) || "";
+  const { onCopy: copyNodeCertificate, hasCopied: nodeCertificateCopied } = useClipboard(
+    nodeCertificateValue
+  );
   const useNobetci = form.watch("use_nobetci");
 
   useEffect(() => {
@@ -162,9 +158,9 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
         ...defaults,
         data_limit: formatDataLimitForInput(defaults.data_limit ?? null),
       });
-      setShowCertificate(isAddMode && !!certificateValue);
+      setShowCertificate(!isAddMode && !!node?.node_certificate);
     }
-  }, [isOpen, isAddMode, node, form, certificateValue]);
+  }, [isOpen, isAddMode, node, form]);
 
   useEffect(() => {
     if (!isAddMode && node && isOpen) {
@@ -189,9 +185,9 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
     mutate(payload);
   });
 
-  const handleCopyCertificate = () => {
-    if (!certificateValue) return;
-    copyCertificate();
+  const handleCopyNodeCertificate = () => {
+    if (!nodeCertificateValue) return;
+    copyNodeCertificate();
     toast({
       title: t("copied"),
       status: "success",
@@ -201,13 +197,13 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
     });
   };
 
-  const handleDownloadCertificate = () => {
-    if (!certificateValue) return;
-    const blob = new Blob([certificateValue], { type: "text/plain" });
+  const handleDownloadNodeCertificate = () => {
+    if (!nodeCertificateValue) return;
+    const blob = new Blob([nodeCertificateValue], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "ssl_client_cert.pem";
+    anchor.download = "node_certificate.pem";
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -244,7 +240,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
               </Stack>
             )}
 
-            {isAddMode && (
+            {!isAddMode && nodeCertificateValue && (
               <Stack spacing={3}>
                 <HStack justify="space-between" align="center">
                   <Text fontWeight="medium">{t("nodes.certificate")}</Text>
@@ -253,17 +249,15 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
                       size="xs"
                       variant="outline"
                       leftIcon={<CopyIconStyled />}
-                      onClick={handleCopyCertificate}
-                      isDisabled={!certificateValue}
+                      onClick={handleCopyNodeCertificate}
                     >
-                      {certificateCopied ? t("copied") : t("copy")}
+                      {nodeCertificateCopied ? t("copied") : t("copy")}
                     </Button>
                     <Button
                       size="xs"
                       variant="outline"
                       leftIcon={<DownloadIconStyled />}
-                      onClick={handleDownloadCertificate}
-                      isDisabled={!certificateValue}
+                      onClick={handleDownloadNodeCertificate}
                     >
                       {t("nodes.download-certificate")}
                     </Button>
@@ -286,7 +280,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
                     </Tooltip>
                   </HStack>
                 </HStack>
-                <Collapse in={showCertificate && !!certificateValue} animateOpacity>
+                <Collapse in={showCertificate} animateOpacity>
                   <Box
                     borderWidth="1px"
                     borderRadius="md"
@@ -298,14 +292,9 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
                     bg="gray.50"
                     _dark={{ bg: "whiteAlpha.100" }}
                   >
-                    {certificateValue || (nodeSettingsLoading ? t("loading") : "")}
+                    {nodeCertificateValue}
                   </Box>
                 </Collapse>
-                {!certificateValue && !nodeSettingsLoading && (
-                  <Text fontSize="xs" color="gray.500" _dark={{ color: "gray.400" }}>
-                    {t("nodes.certificateUnavailable", "Certificate not available.")}
-                  </Text>
-                )}
               </Stack>
             )}
 
