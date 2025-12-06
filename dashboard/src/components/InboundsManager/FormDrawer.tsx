@@ -1381,11 +1381,11 @@ export const InboundFormModal: FC<Props> = ({
                       )}
                     </FormControl>
                   </SimpleGrid>
-                  <FormControl isRequired isInvalid={Boolean(errors.realityShortIds)}>
+                  <FormControl isInvalid={Boolean(errors.realityShortIds)}>
                     <FormLabel>{t("inbounds.reality.shortIds", "Short IDs")}</FormLabel>
                     <Textarea
                       rows={2}
-                      {...register("realityShortIds", { required: true })}
+                      {...register("realityShortIds")}
                     />
                     <Button
                       size="xs"

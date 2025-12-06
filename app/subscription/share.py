@@ -355,9 +355,11 @@ def process_inbounds_and_tags(
                 salt = username[:8].ljust(8, "0")
                 sni = sni.replace("*", salt)
 
+        # Get shortId from inbound sids if available
+        sid = ""
         if sids := inbound.get("sids"):
             # Use first SID to ensure consistent configs
-            inbound["sid"] = sids[0]
+            sid = sids[0]
 
         req_host = ""
         req_host_list = host["host"] or inbound["host"]
@@ -401,6 +403,7 @@ def process_inbounds_and_tags(
                 "fragment_setting": host["fragment_setting"],
                 "noise_setting": host["noise_setting"],
                 "random_user_agent": host["random_user_agent"],
+                "sid": sid,  # Include shortId in host_inbound so it's passed to user configs
             }
         )
 

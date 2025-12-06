@@ -842,24 +842,14 @@ def _normalize_reality_private_key(private_key: str) -> str:
 
 def _normalize_reality_short_id(short_id: str) -> str:
     """
-    Normalize a REALITY short ID to hex format (up to 8 hex characters).
+    Normalize a REALITY short ID by removing whitespace only.
+    No validation or restrictions - accepts any value entered by user.
     """
     if not short_id:
         return ""
     
-    # Remove whitespace and convert to lowercase
-    normalized = "".join(short_id.split()).lower()
-    
-    # Remove any non-hex characters
-    normalized = re.sub(r'[^0-9a-f]', '', normalized)
-    
-    # Truncate to 8 characters max (4 bytes)
-    if len(normalized) > 8:
-        normalized = normalized[:8]
-    
-    # Pad to even length if needed
-    if len(normalized) % 2:
-        normalized = "0" + normalized
+    # Only remove whitespace, preserve everything else as entered
+    normalized = "".join(short_id.split())
     
     return normalized
 
