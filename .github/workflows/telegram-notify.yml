@@ -1,0 +1,178 @@
+name: Telegram Notify on Push / PR / Release
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request_target:
+    types: [opened, closed]
+  release:
+    types: [published, prereleased]
+
+jobs:
+  notify-telegram:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Telegram Notification
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_TARGETS: ${{ vars.TELEGRAM_TARGETS }}
+        run: |
+          # Helper for HTML escaping (Telegram-safe)
+          html_escape() {
+            echo "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g'
+          }
+
+          LOG_BUFFER=""
+          log() {
+            LOG_BUFFER+="$1"$'\n'
+          }
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # --------------------- PUSH EVENT ---------------------
+            BRANCH=$(html_escape "${{ github.ref_name }}")
+            ACTOR=$(html_escape "${{ github.actor }}")
+
+            # Trim whitespace around compare URL
+            COMPARE_URL="${{ github.event.compare }}"
+            COMPARE_URL="${COMPARE_URL#"${COMPARE_URL%%[![:space:]]*}"}"   # trim leading
+            COMPARE_URL="${COMPARE_URL%"${COMPARE_URL##*[![:space:]]}"}"   # trim trailing
+
+            EVENT_STATUS="🚀 <b>New code pushed to <code>$BRANCH</code></b>"
+
+            # Collect commits (max 10)
+            COMMITS_RAW=$(echo '${{ toJSON(github.event.commits) }}' | jq -r '.[] | "- " + (.message | gsub("\n"; " ") | gsub("\r"; " ") | gsub("\""; "\\\"")) + " (" + (.id | .[0:7]) + ")"' | head -n 10)
+
+            ESCAPED_COMMITS=""
+            while IFS= read -r line; do
+              if [[ -n "$line" ]]; then
+                if [[ "$line" =~ \(([a-f0-9]{7})\)$ ]]; then
+                  HASH="${BASH_REMATCH[1]}"
+                  PREFIX="${line% (*}"
+                  ESC_PREFIX=$(html_escape "$PREFIX")
+                  ESC_HASH=$(html_escape "$HASH")
+                  ESCAPED_COMMITS+="$ESC_PREFIX (<code>$ESC_HASH</code>)"$'\n'
+                else
+                  ESCAPED_COMMITS+=$(html_escape "$line")$'\n'
+                fi
+              fi
+            done <<< "$COMMITS_RAW"
+
+            MESSAGE="$EVENT_STATUS%0A%0A👤 Author: $ACTOR%0A🔍 <a href=\"$COMPARE_URL\">Open diff on GitHub</a>%0A%0A<b>Latest commits:</b>%0A$ESCAPED_COMMITS"
+
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            # --------------------- RELEASE EVENT ---------------------
+            ACTOR=$(html_escape "${{ github.actor }}")
+            REL_TAG=$(html_escape "${{ github.event.release.tag_name }}")
+            REL_NAME_RAW="${{ github.event.release.name }}"
+            REL_NAME=$(html_escape "$REL_NAME_RAW")
+            REL_URL="${{ github.event.release.html_url }}"
+            ACTION="${{ github.event.action }}"
+
+            # Fallback: if name is empty, use tag
+            if [[ -z "$REL_NAME_RAW" ]]; then
+              DISPLAY_NAME="$REL_TAG"
+            else
+              DISPLAY_NAME="$REL_NAME"
+            fi
+
+            if [[ "$ACTION" == "published" || "$ACTION" == "prereleased" ]]; then
+              EVENT_STATUS="🏁 <b>New Release published</b>"
+            else
+              EVENT_STATUS="ℹ️ <b>Release event: $ACTION</b>"
+            fi
+
+            MESSAGE="$EVENT_STATUS%0A%0A📦 Name: $DISPLAY_NAME%0A🏷 Tag: <code>$REL_TAG</code>%0A👤 Released by: $ACTOR%0A🔗 <a href=\"$REL_URL\">View release page</a>"
+
+          else
+            # --------------------- PULL REQUEST EVENT ---------------------
+            ACTOR=$(html_escape "${{ github.actor }}")
+            PR_TITLE=$(html_escape "${{ github.event.pull_request.title }}")
+            PR_URL="${{ github.event.pull_request.html_url }}"
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+
+            if [[ "${{ github.event.action }}" == "opened" ]]; then
+              PR_STATUS="📝 <b>Pull Request opened</b>"
+            elif [[ "${{ github.event.action }}" == "closed" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
+              PR_STATUS="🎉 <b>Pull Request merged</b>"
+            else
+              PR_STATUS="🛑 <b>Pull Request closed (not merged)</b>"
+            fi
+
+            COMMITS_RAW=$(curl -s \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/commits" \
+              | jq -r '.[] | "- " + (.commit.message | gsub("\n"; " ") | gsub("\r"; " ") | gsub("\""; "\\\"")) + " (" + (.sha | .[0:7]) + ")"' \
+              | head -n 10)
+
+            ESCAPED_COMMITS=""
+            while IFS= read -r line; do
+              if [[ -n "$line" ]]; then
+                if [[ "$line" =~ \(([a-f0-9]{7})\)$ ]]; then
+                  HASH="${BASH_REMATCH[1]}"
+                  PREFIX="${line% (*}"
+                  ESC_PREFIX=$(html_escape "$PREFIX")
+                  ESC_HASH=$(html_escape "$HASH")
+                  ESCAPED_COMMITS+="$ESC_PREFIX (<code>$ESC_HASH</code>)"$'\n'
+                else
+                  ESCAPED_COMMITS+=$(html_escape "$line")$'\n'
+                fi
+              fi
+            done <<< "$COMMITS_RAW"
+
+            MESSAGE="$PR_STATUS%0A%0A👤 Author: $ACTOR%0A🧾 Title: $PR_TITLE%0A🔗 <a href=\"$PR_URL\">Open Pull Request</a>%0A%0A<b>Related commits:</b>%0A$ESCAPED_COMMITS"
+          fi
+
+          # Debug info (printed only on failure)
+          DECODED_MESSAGE=$(echo "$MESSAGE" | sed 's/%0A/\n/g')
+          log "=== Debug: GitHub context ==="
+          log "Event: ${{ github.event_name }}"
+          log "Action: ${{ github.event.action }}"
+          log "Actor: ${{ github.actor }}"
+          log "Repository: ${{ github.repository }}"
+          log "Ref: ${{ github.ref_name }}"
+          log ""
+          log "=== Debug: Telegram payload (decoded) ==="
+          log "$DECODED_MESSAGE"
+          log ""
+
+          IFS=',' read -ra TARGETS <<< "$TELEGRAM_TARGETS"
+          log "Telegram targets: $TELEGRAM_TARGETS"
+
+          SEND_FAILED=false
+
+          for TARGET in "${TARGETS[@]}"; do
+            if [[ "$TARGET" == *"^"* ]]; then
+              CHAT_ID=$(echo "$TARGET" | cut -d'^' -f1)
+              TOPIC_ID=$(echo "$TARGET" | cut -d'^' -f2)
+            else
+              CHAT_ID="$TARGET"
+              TOPIC_ID=""
+            fi
+
+            # No space after "bot" – required by Telegram API
+            RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+              -d "chat_id=$CHAT_ID" \
+              ${TOPIC_ID:+-d "message_thread_id=$TOPIC_ID"} \
+              -d "parse_mode=HTML" \
+              -d "text=$MESSAGE")
+
+            if echo "$RESPONSE" | grep -q '"ok":true'; then
+              echo "✅ Telegram notification sent to $CHAT_ID"
+            else
+              SEND_FAILED=true
+              ERROR_DESC=$(echo "$RESPONSE" | jq -r '.description // "unknown"' 2>/dev/null)
+              log "❌ Failed to send to $CHAT_ID: $ERROR_DESC"
+              log "Raw response: $RESPONSE"
+            fi
+          done
+
+          if [[ "$SEND_FAILED" == "true" ]]; then
+            echo "❌ Workflow failed. Debug log below:"
+            echo "$LOG_BUFFER"
+            exit 1
+          else
+            echo "✅ All Telegram notifications delivered successfully."
+          fi
