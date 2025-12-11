@@ -7,3 +7,4 @@ message TypedMessage {
   bytes value = 2;
 }
 
+

@@ -250,9 +250,12 @@ def modify_service(
 
     db.refresh(service)
     if hosts_modified:
-        xray.hosts.update()
+        # Avoid blocking the response on host refresh.
+        import threading
 
-        # Update Redis cache
+        threading.Thread(target=xray.hosts.update, daemon=True).start()
+
+        # Update Redis cache (non-blocking best-effort)
         from config import REDIS_ENABLED
 
         if REDIS_ENABLED:

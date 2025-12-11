@@ -6,7 +6,7 @@ Consolidates user_cache.py and usage_cache.py into a single module.
 import json
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Iterable
 from collections import defaultdict
 
 from app.redis.client import get_redis
@@ -27,6 +27,8 @@ REDIS_KEY_PREFIX_USER_BY_ID = "user:id:"
 REDIS_KEY_PREFIX_USER_LIST = "user:list:"
 REDIS_KEY_PREFIX_USER_COUNT = "user:count:"
 REDIS_KEY_USER_LIST_ALL = f"{REDIS_KEY_PREFIX_USER_LIST}all"
+REDIS_KEY_PREFIX_USER_PENDING_SYNC = "user:sync:pending:"
+REDIS_KEY_USER_PENDING_SYNC_SET = "user:sync:pending_set"
 
 # Usage cache keys
 REDIS_KEY_PREFIX_USER_USAGE = "usage:user:"
@@ -36,6 +38,8 @@ REDIS_KEY_PREFIX_NODE_USAGE_PENDING = "usage:node:pending:"
 REDIS_KEY_PREFIX_ADMIN_USAGE_PENDING = "usage:admin:pending:"
 REDIS_KEY_PREFIX_SERVICE_USAGE_PENDING = "usage:service:pending:"
 REDIS_KEY_PREFIX_ADMIN_SERVICE_USAGE_PENDING = "usage:admin_service:pending:"
+REDIS_KEY_USER_PENDING_TOTAL = "usage:user:pending_total:"
+REDIS_KEY_USER_PENDING_ONLINE = "usage:user:pending_online:"
 
 # Service, Inbound, and Host cache keys
 REDIS_KEY_PREFIX_SERVICE = "service:"
@@ -268,8 +272,13 @@ def _deserialize_user(user_dict: Dict[str, Any], db: Optional[Any] = None) -> Op
         return None
 
 
-def cache_user(user: User) -> bool:
-    """Cache a user's data in Redis."""
+def cache_user(user: User, mark_for_sync: bool = True) -> bool:
+    """Cache a user's data in Redis and optionally mark it for sync to DB.
+
+    Args:
+        user: User object to cache
+        mark_for_sync: If True, mark this user for periodic sync to database
+    """
     redis_client = get_redis()
     if not redis_client:
         return False
@@ -303,6 +312,16 @@ def cache_user(user: User) -> bool:
             ttl = redis_client.ttl(REDIS_KEY_USER_LIST_ALL)
             ttl_value = ttl if ttl and ttl > 0 else USER_CACHE_TTL
             redis_client.setex(REDIS_KEY_USER_LIST_ALL, ttl_value, json.dumps(data))
+
+        # Mark user for sync to database if requested
+        if mark_for_sync and user.id:
+            try:
+                sync_key = f"{REDIS_KEY_PREFIX_USER_PENDING_SYNC}{user.id}"
+                redis_client.setex(sync_key, USER_CACHE_TTL, user_json)
+                redis_client.sadd(REDIS_KEY_USER_PENDING_SYNC_SET, str(user.id))
+            except Exception as e:
+                logger.debug(f"Failed to mark user {user.id} for sync: {e}")
+
         return True
     except Exception as e:
         logger.warning(f"Failed to cache user in Redis: {e}")
@@ -327,6 +346,14 @@ def get_cached_user(
         user_dict = json.loads(user_json)
         user = _deserialize_user(user_dict, db)
         if user:
+            # Merge pending usage/online state for freshness
+            pending_total, pending_online = get_user_pending_usage_state(user.id)
+            if pending_total:
+                user.used_traffic = (user.used_traffic or 0) + pending_total
+                if hasattr(user, "lifetime_used_traffic"):
+                    user.lifetime_used_traffic = (getattr(user, "lifetime_used_traffic", 0) or 0) + pending_total
+            if pending_online and (not user.online_at or pending_online > user.online_at):
+                user.online_at = pending_online
             return user
 
     # Fallback to DB if not found in cache (avoid recursive cache calls)
@@ -373,6 +400,9 @@ def invalidate_user_cache(username: Optional[str] = None, user_id: Optional[int]
         keys_to_delete = []
         if user_id:
             keys_to_delete.append(_get_user_id_key(user_id))
+            # Also remove from sync pending set
+            redis_client.srem(REDIS_KEY_USER_PENDING_SYNC_SET, str(user_id))
+            redis_client.delete(f"{REDIS_KEY_PREFIX_USER_PENDING_SYNC}{user_id}")
         if username:
             keys_to_delete.append(_get_user_key(username))
 
@@ -415,6 +445,51 @@ def invalidate_user_cache(username: Optional[str] = None, user_id: Optional[int]
         return False
 
 
+def get_pending_user_sync_ids() -> List[int]:
+    """Get list of user IDs that need to be synced to database."""
+    redis_client = get_redis()
+    if not redis_client:
+        return []
+
+    try:
+        member_ids = redis_client.smembers(REDIS_KEY_USER_PENDING_SYNC_SET)
+        return [int(uid) for uid in member_ids if uid.isdigit()]
+    except Exception as e:
+        logger.debug(f"Failed to get pending sync user IDs: {e}")
+        return []
+
+
+def get_pending_user_sync_data(user_id: int) -> Optional[Dict[str, Any]]:
+    """Get pending sync data for a user."""
+    redis_client = get_redis()
+    if not redis_client:
+        return None
+
+    try:
+        sync_key = f"{REDIS_KEY_PREFIX_USER_PENDING_SYNC}{user_id}"
+        user_json = redis_client.get(sync_key)
+        if user_json:
+            return json.loads(user_json)
+    except Exception as e:
+        logger.debug(f"Failed to get pending sync data for user {user_id}: {e}")
+    return None
+
+
+def clear_user_sync_pending(user_id: int) -> bool:
+    """Clear sync pending flag for a user after successful sync."""
+    redis_client = get_redis()
+    if not redis_client:
+        return False
+
+    try:
+        redis_client.srem(REDIS_KEY_USER_PENDING_SYNC_SET, str(user_id))
+        redis_client.delete(f"{REDIS_KEY_PREFIX_USER_PENDING_SYNC}{user_id}")
+        return True
+    except Exception as e:
+        logger.debug(f"Failed to clear sync pending for user {user_id}: {e}")
+        return False
+
+
 def get_all_users_from_cache(db: Optional[Any] = None) -> List[User]:
     """Get all users from Redis cache using optimized batch reading."""
     redis_client = get_redis()
@@ -432,6 +507,15 @@ def get_all_users_from_cache(db: Optional[Any] = None) -> List[User]:
                     for user_dict in data:
                         user = _deserialize_user(user_dict, db)
                         if user and user.status != UserStatus.deleted:
+                            pending_total, pending_online = get_user_pending_usage_state(user.id)
+                            if pending_total:
+                                user.used_traffic = (user.used_traffic or 0) + pending_total
+                                if hasattr(user, "lifetime_used_traffic"):
+                                    user.lifetime_used_traffic = (
+                                        getattr(user, "lifetime_used_traffic", 0) or 0
+                                    ) + pending_total
+                            if pending_online and (not user.online_at or pending_online > user.online_at):
+                                user.online_at = pending_online
                             users.append(user)
                     if users:
                         return users
@@ -473,6 +557,15 @@ def get_all_users_from_cache(db: Optional[Any] = None) -> List[User]:
                             seen_user_ids.add(user_id)
                             user = _deserialize_user(user_dict, db)
                             if user and user.status != UserStatus.deleted:
+                                pending_total, pending_online = get_user_pending_usage_state(user.id)
+                                if pending_total:
+                                    user.used_traffic = (user.used_traffic or 0) + pending_total
+                                    if hasattr(user, "lifetime_used_traffic"):
+                                        user.lifetime_used_traffic = (
+                                            getattr(user, "lifetime_used_traffic", 0) or 0
+                                        ) + pending_total
+                                if pending_online and (not user.online_at or pending_online > user.online_at):
+                                    user.online_at = pending_online
                                 users.append(user)
                     except Exception as e:
                         logger.debug(f"Failed to deserialize user: {e}")
@@ -530,6 +623,8 @@ def get_all_users_raw_from_cache(db: Optional[Any] = None) -> List[Dict[str, Any
     - Does NOT call _deserialize_user and does NOT create SQLAlchemy models.
     - Uses the same Redis keys and aggregation strategy as get_all_users_from_cache.
     - Filters out users with status == UserStatus.deleted.
+    - IMPORTANT: Does NOT fallback to DB if Redis is enabled - returns empty list instead.
+    - OPTIMIZED: Uses batch operations to get pending usage states efficiently.
     """
     redis_client = get_redis()
     if not redis_client:
@@ -542,7 +637,73 @@ def get_all_users_raw_from_cache(db: Optional[Any] = None) -> List[Dict[str, Any
             try:
                 data = json.loads(aggregated)
                 if isinstance(data, list):
-                    return [u for u in data if u.get("status") != UserStatus.deleted.value]
+                    users = []
+                    user_ids = []
+                    # First pass: collect user IDs and filter deleted
+                    for u in data:
+                        if u.get("status") == UserStatus.deleted.value:
+                            continue
+                        users.append(u)
+                        user_id = u.get("id")
+                        if user_id:
+                            user_ids.append(user_id)
+
+                    # Batch get all pending usage states at once
+                    if user_ids:
+                        pipe = redis_client.pipeline()
+                        for user_id in user_ids:
+                            pipe.get(f"{REDIS_KEY_USER_PENDING_TOTAL}{user_id}")
+                            pipe.get(f"{REDIS_KEY_USER_PENDING_ONLINE}{user_id}")
+                        results = pipe.execute()
+
+                        # Process results in pairs (total, online)
+                        pending_data = {}
+                        for i, user_id in enumerate(user_ids):
+                            pending_total_raw = results[i * 2]
+                            pending_online_raw = results[i * 2 + 1]
+
+                            pending_total = 0
+                            if pending_total_raw:
+                                try:
+                                    pending_total = int(pending_total_raw)
+                                except (TypeError, ValueError):
+                                    pass
+
+                            pending_online = None
+                            if pending_online_raw:
+                                try:
+                                    pending_online = datetime.fromisoformat(
+                                        pending_online_raw.decode()
+                                        if isinstance(pending_online_raw, bytes)
+                                        else pending_online_raw
+                                    )
+                                except Exception:
+                                    pass
+
+                            pending_data[user_id] = (pending_total, pending_online)
+
+                        # Apply pending usage to users
+                        for u in users:
+                            user_id = u.get("id")
+                            if user_id and user_id in pending_data:
+                                pending_total, pending_online = pending_data[user_id]
+                                if pending_total:
+                                    u["used_traffic"] = (u.get("used_traffic") or 0) + pending_total
+                                    u["lifetime_used_traffic"] = (u.get("lifetime_used_traffic") or 0) + pending_total
+                                if pending_online:
+                                    current_online = u.get("online_at")
+                                    try:
+                                        current_dt = (
+                                            datetime.fromisoformat(current_online)
+                                            if isinstance(current_online, str)
+                                            else None
+                                        )
+                                    except Exception:
+                                        current_dt = None
+                                    if not current_dt or pending_online > current_dt:
+                                        u["online_at"] = pending_online.isoformat()
+
+                    return users
             except Exception as exc:
                 logger.debug(f"Failed to decode aggregated user list (raw): {exc}")
 
@@ -580,35 +741,28 @@ def get_all_users_raw_from_cache(db: Optional[Any] = None) -> List[Dict[str, Any
                         if user_id and user_id not in seen_user_ids:
                             seen_user_ids.add(user_id)
                             if user_dict.get("status") != UserStatus.deleted.value:
+                                pending_total, pending_online = get_user_pending_usage_state(user_id)
+                                if pending_total:
+                                    user_dict["used_traffic"] = (user_dict.get("used_traffic") or 0) + pending_total
+                                    user_dict["lifetime_used_traffic"] = (
+                                        user_dict.get("lifetime_used_traffic") or 0
+                                    ) + pending_total
+                                if pending_online:
+                                    current_online = user_dict.get("online_at")
+                                    try:
+                                        current_dt = (
+                                            datetime.fromisoformat(current_online)
+                                            if isinstance(current_online, str)
+                                            else None
+                                        )
+                                    except Exception:
+                                        current_dt = None
+                                    if not current_dt or pending_online > current_dt:
+                                        user_dict["online_at"] = pending_online.isoformat()
                                 users.append(user_dict)
                     except Exception as e:
                         logger.debug(f"Failed to deserialize user (raw): {e}")
                         continue
-
-        # Fallback to DB when no per-user cache exists
-        if not users and db:
-            try:
-                from app.db.crud import get_user_queryset
-
-                query = get_user_queryset(db, eager_load=False)
-                db_users = query.all()
-                users = [_serialize_user(u) for u in db_users if getattr(u, "status", None) != UserStatus.deleted]
-                try:
-                    pipe = redis_client.pipeline()
-                    for u in users:
-                        serialized = json.dumps(u)
-                        user_id = u.get("id")
-                        username = u.get("username")
-                        if user_id:
-                            pipe.setex(_get_user_id_key(user_id), USER_CACHE_TTL, serialized)
-                        if username:
-                            pipe.setex(_get_user_key(username), USER_CACHE_TTL, serialized)
-                    pipe.execute()
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.error(f"Failed to load users from database (raw): {e}")
-                users = []
 
         # Refresh aggregated list if we have anything
         if users:
@@ -678,7 +832,7 @@ def warmup_users_cache() -> Tuple[int, int]:
 
 
 def cache_user_usage_update(user_id: int, used_traffic_delta: int, online_at: Optional[datetime] = None) -> bool:
-    """Update user usage in Redis cache (for record_usages)."""
+    """Update user usage in Redis cache (for usage recording jobs)."""
     redis_client = get_redis()
     if not redis_client:
         return False
@@ -693,6 +847,18 @@ def cache_user_usage_update(user_id: int, used_traffic_delta: int, online_at: Op
         }
         redis_client.lpush(usage_key, json.dumps(usage_data))
         redis_client.expire(usage_key, 3600)
+        try:
+            pending_total_key = f"{REDIS_KEY_USER_PENDING_TOTAL}{user_id}"
+            redis_client.incrby(pending_total_key, used_traffic_delta)
+            redis_client.expire(pending_total_key, 3600)
+            if online_at:
+                redis_client.setex(
+                    f"{REDIS_KEY_USER_PENDING_ONLINE}{user_id}",
+                    3600,
+                    online_at.isoformat(),
+                )
+        except Exception as exc:
+            logger.debug(f"Failed to update pending total for user {user_id}: {exc}")
         return True
     except Exception as e:
         logger.warning(f"Failed to cache user usage update: {e}")
@@ -733,6 +899,70 @@ def get_pending_usage_updates(max_items: Optional[int] = None) -> List[Dict[str,
     except Exception as e:
         logger.error(f"Failed to get pending usage updates: {e}")
         return []
+
+
+def get_user_pending_usage_state(user_id: int) -> Tuple[int, Optional[datetime]]:
+    """
+    Return unsynced usage delta and latest online_at for a user (in Redis), without consuming it.
+    Aggregates a fast counter key and falls back to summing the pending list.
+    """
+    redis_client = get_redis()
+    if not redis_client:
+        return 0, None
+
+    try:
+        online_at = None
+        online_raw = redis_client.get(f"{REDIS_KEY_USER_PENDING_ONLINE}{user_id}")
+        if online_raw:
+            try:
+                online_at = datetime.fromisoformat(online_raw.decode() if isinstance(online_raw, bytes) else online_raw)
+            except Exception:
+                online_at = None
+
+        pending_total_key = f"{REDIS_KEY_USER_PENDING_TOTAL}{user_id}"
+        pending_total = redis_client.get(pending_total_key)
+        if pending_total:
+            try:
+                return int(pending_total), online_at
+            except (TypeError, ValueError):
+                pass
+
+        # Fallback: sum the pending list without popping it
+        usage_key = f"user:usage:{user_id}"
+        entries = redis_client.lrange(usage_key, 0, -1) or []
+        total = 0
+        for entry in entries:
+            try:
+                data = json.loads(entry)
+                total += int(float(data.get("used_traffic_delta", 0)))
+                pending_online = data.get("online_at")
+                if pending_online and not online_at:
+                    try:
+                        online_at = datetime.fromisoformat(pending_online.replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+        return total, online_at
+    except Exception as exc:
+        logger.debug(f"Failed to read pending usage total for user {user_id}: {exc}")
+        return 0, None
+
+
+def clear_user_pending_usage(user_ids: Iterable[int]) -> None:
+    """Remove pending usage keys for the given users (best effort)."""
+    redis_client = get_redis()
+    if not redis_client:
+        return
+    try:
+        pipe = redis_client.pipeline()
+        for uid in user_ids:
+            pipe.delete(f"user:usage:{uid}")
+            pipe.delete(f"{REDIS_KEY_USER_PENDING_TOTAL}{uid}")
+            pipe.delete(f"{REDIS_KEY_USER_PENDING_ONLINE}{uid}")
+        pipe.execute()
+    except Exception as exc:
+        logger.debug(f"Failed to clear pending usage keys: {exc}")
 
 
 def cache_user_usage(

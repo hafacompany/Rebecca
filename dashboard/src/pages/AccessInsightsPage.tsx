@@ -626,3 +626,4 @@ const AccessInsightsPage: FC = () => {
 };
 
 export default AccessInsightsPage;
+

@@ -180,9 +180,7 @@ def validate_subscription_by_key(
                 try:
                     fresh_user = _get_fresh_user(db, username) or cached_user
                     if normalize_key(fresh_user.credential_key) == normalized_key:
-                        cache_user_subscription(
-                            username=fresh_user.username, credential_key=fresh_user.credential_key
-                        )
+                        cache_user_subscription(username=fresh_user.username, credential_key=fresh_user.credential_key)
                         cache_user(fresh_user)
                         return fresh_user
                 except ValueError:

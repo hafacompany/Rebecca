@@ -815,11 +815,11 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None, service: Opt
     except Exception as e:  # pragma: no cover - defensive logging
         _logger.debug("Failed to pre-load proxy relationships for user %s: %s", dbuser.username, e)
 
-    # Cache user in Redis
+    # Cache user in Redis and mark for sync
     try:
         from app.redis.cache import cache_user
 
-        cache_user(dbuser)
+        cache_user(dbuser, mark_for_sync=True)
     except Exception as e:
         _logger.warning(f"Failed to cache user in Redis: {e}")
 
@@ -1041,12 +1041,12 @@ def update_user(
     except Exception as e:  # pragma: no cover - defensive logging
         _logger.debug("Failed to pre-load proxy relationships for updated user %s: %s", dbuser.username, e)
 
-    # Update user in Redis cache
+    # Update user in Redis cache and mark for sync
     try:
         from app.redis.cache import cache_user, invalidate_user_cache
 
         invalidate_user_cache(username=dbuser.username, user_id=dbuser.id)
-        cache_user(dbuser)
+        cache_user(dbuser, mark_for_sync=True)
     except Exception as e:
         _logger.warning(f"Failed to update user in Redis cache: {e}")
 
@@ -1073,6 +1073,15 @@ def reset_user_by_next(db: Session, dbuser: User) -> User:
     db.add(dbuser)
     db.commit()
     db.refresh(dbuser)
+
+    # Update user in Redis cache and mark for sync
+    try:
+        from app.redis.cache import cache_user
+
+        cache_user(dbuser, mark_for_sync=True)
+    except Exception as e:
+        _logger.warning(f"Failed to update user in Redis cache: {e}")
+
     return dbuser
 
 
@@ -1123,6 +1132,15 @@ def revoke_user_sub(db: Session, dbuser: User) -> User:
 
     db.commit()
     db.refresh(dbuser)
+
+    # Update user in Redis cache and mark for sync
+    try:
+        from app.redis.cache import cache_user
+
+        cache_user(dbuser, mark_for_sync=True)
+    except Exception as e:
+        _logger.warning(f"Failed to update user in Redis cache: {e}")
+
     return dbuser
 
 

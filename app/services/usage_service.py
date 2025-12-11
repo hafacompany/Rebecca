@@ -19,6 +19,8 @@ from app.redis.cache import (
     REDIS_KEY_PREFIX_ADMIN_USAGE_PENDING,
     REDIS_KEY_PREFIX_SERVICE_USAGE_PENDING,
     REDIS_KEY_PREFIX_ADMIN_SERVICE_USAGE_PENDING,
+    REDIS_KEY_USER_PENDING_TOTAL,
+    REDIS_KEY_USER_PENDING_ONLINE,
 )
 from app.redis.client import get_redis
 from config import REDIS_ENABLED
@@ -126,6 +128,15 @@ def sync_usage_updates_to_db() -> None:
             from app.redis.pending_backup import clear_user_usage_backup
 
             clear_user_usage_backup()
+
+        try:
+            pipe = redis_client.pipeline()
+            for user_id in user_updates.keys():
+                pipe.delete(f"{REDIS_KEY_USER_PENDING_TOTAL}{user_id}")
+                pipe.delete(f"{REDIS_KEY_USER_PENDING_ONLINE}{user_id}")
+            pipe.execute()
+        except Exception as exc:
+            logger.debug(f"Failed to clear pending usage total keys: {exc}")
 
         admin_synced = _sync_admin_usage_updates(redis_client)
         if admin_synced:

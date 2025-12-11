@@ -436,6 +436,20 @@ def reset_user_data_usage(db: Session, dbuser: User) -> User:
 
     db.commit()
     db.refresh(dbuser)
+
+    # Update user in Redis cache and mark for sync
+    try:
+        from app.redis.cache import cache_user
+        import logging
+
+        logger = logging.getLogger(__name__)
+        cache_user(dbuser, mark_for_sync=True)
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to update user in Redis cache: {e}")
+
     return dbuser
 
 

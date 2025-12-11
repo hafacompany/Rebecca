@@ -23,7 +23,7 @@ from app import runtime
 from app.db import GetDB, crud
 from app.utils.system import register_scheduler_jobs
 
-__version__ = "0.0.28"
+__version__ = "0.0.29"
 
 IS_RUNNING_TESTS = "PYTEST_CURRENT_TEST" in os.environ
 IS_RUNNING_ALEMBIC = any("alembic" in (arg or "").lower() for arg in sys.argv)
@@ -121,10 +121,10 @@ if not SKIP_RUNTIME_INIT:
         # Start scheduler first (so server can start quickly)
         scheduler.start()
 
-        # Warm up caches in background (async) if Redis is available
+        # Warm up caches if Redis is available
         redis_client = get_redis()
         if redis_client:
-            logger.info("Redis is available, warming up caches in background...")
+            logger.info("Redis is available, warming up caches...")
 
             # Restore pending backups to Redis first
             try:
@@ -134,20 +134,22 @@ if not SKIP_RUNTIME_INIT:
             except Exception as e:
                 logger.warning(f"Failed to restore backups to Redis: {e}", exc_info=True)
 
+            try:
+                from app.redis.cache import warmup_users_cache
+
+                logger.info("Warming up users cache (this may take a moment)...")
+                total, cached = warmup_users_cache()
+                logger.info(f"Users cache warmup completed: {cached}/{total} users cached")
+            except Exception as e:
+                logger.error(f"Failed to warmup users cache: {e}", exc_info=True)
+
+            # Warm up other caches in background (non-critical)
             def warmup_caches_async():
                 try:
                     total, cached = warmup_subscription_cache()
                     logger.info(f"Subscription cache warmup completed: {cached}/{total} users cached")
                 except Exception as e:
                     logger.warning(f"Failed to warmup subscription cache: {e}", exc_info=True)
-
-                try:
-                    from app.redis.cache import warmup_users_cache
-
-                    total, cached = warmup_users_cache()
-                    logger.info(f"Users cache warmup completed: {cached}/{total} users cached")
-                except Exception as e:
-                    logger.warning(f"Failed to warmup users cache: {e}", exc_info=True)
 
                 # Warmup usage cache gradually (to avoid DB overload)
                 try:
@@ -169,7 +171,7 @@ if not SKIP_RUNTIME_INIT:
                 except Exception as e:
                     logger.warning(f"Failed to warmup services/inbounds/hosts cache: {e}", exc_info=True)
 
-            # Run warmup in background thread
+            # Run non-critical warmup in background thread
             import threading
 
             warmup_thread = threading.Thread(target=warmup_caches_async, daemon=True)

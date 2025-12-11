@@ -18,6 +18,7 @@ from app.models.user import UserResponse, UserStatus
 from app.utils import report
 from config import JOB_REVIEW_USERS_BATCH_SIZE, JOB_REVIEW_USERS_INTERVAL
 from app.redis.client import get_redis
+from app.redis.cache import get_user_pending_usage_state
 
 _review_lock = threading.Lock()
 
@@ -56,6 +57,15 @@ def _set_last_id(key: str, value: int) -> None:
 
 
 def _get_user_used_traffic(user: User) -> int:
+    # Combine DB usage with any pending deltas in Redis (not yet synced to DB).
+    base_usage = user.used_traffic or 0
+    try:
+        pending_total, _ = get_user_pending_usage_state(user.id) if user.id is not None else (0, None)
+        base_usage += pending_total
+    except Exception:
+        pass
+
+    # Allow overriding with a dedicated Redis key if present.
     client = _redis()
     if client and user.id is not None:
         key = f"user:{user.id}:used_traffic"
@@ -65,7 +75,7 @@ def _get_user_used_traffic(user: User) -> int:
                 return int(value)
             except (TypeError, ValueError):
                 pass
-    return user.used_traffic
+    return base_usage
 
 
 def _is_user_limited(user: User) -> bool:

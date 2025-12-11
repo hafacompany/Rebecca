@@ -28,12 +28,15 @@ from app import runtime
 from app.runtime import logger
 from app.services import metrics_service
 
+# region Helpers
+
 xray = runtime.xray
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
 
 def _ensure_service_visibility(service, admin: Admin):
+    # Enforce service ownership/visibility for non-sudo admins.
     if admin.role in (AdminRole.sudo, AdminRole.full_access):
         return
     if admin.id is None or admin.id not in service.admin_ids:
@@ -41,6 +44,7 @@ def _ensure_service_visibility(service, admin: Admin):
 
 
 def _ensure_flow_permission(admin: Admin, has_flow: bool) -> None:
+    # Restrict flow settings to privileged admins.
     if not has_flow:
         return
     if admin.role in (AdminRole.sudo, AdminRole.full_access):
@@ -54,6 +58,7 @@ def _ensure_flow_permission(admin: Admin, has_flow: bool) -> None:
 
 
 def _ensure_custom_key_permission(admin: Admin, has_key: bool) -> None:
+    # Restrict custom credential keys to privileged admins.
     if not has_key:
         return
     if admin.role in (AdminRole.sudo, AdminRole.full_access):
@@ -64,6 +69,11 @@ def _ensure_custom_key_permission(admin: Admin, has_key: bool) -> None:
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You're not allowed to set a custom credential key.",
     )
+
+
+# endregion
+
+# region User CRUD
 
 
 @router.post(
@@ -217,6 +227,11 @@ def add_user(
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(f'New user "{dbuser.username}" added')
     return user
+
+
+# endregion
+
+# region User lifecycle (get/update/delete/reset/revoke)
 
 
 @router.get("/user/{username}", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
@@ -374,6 +389,11 @@ def remove_user(
     return {"detail": "User successfully deleted"}
 
 
+# endregion
+
+# region User usage & subscription management
+
+
 @router.post(
     "/user/{username}/reset", response_model=UserResponse, responses={403: responses._403, 404: responses._404}
 )
@@ -424,6 +444,11 @@ def revoke_user_subscription(
     return user
 
 
+# endregion
+
+# region Users listing & bulk actions
+
+
 @router.get(
     "/users", response_model=UsersResponse, responses={400: responses._400, 403: responses._403, 404: responses._404}
 )
@@ -467,7 +492,7 @@ def get_users(
             except KeyError:
                 raise HTTPException(status_code=400, detail=f'"{opt}" is not a valid sort option')
 
-    owners = owner if admin.role in (AdminRole.sudo, AdminRole.full_access) else None
+    owners = owner if admin.role in (AdminRole.sudo, AdminRole.full_access) else [admin.username]
     dbadmin = None
     users_limit = None
     active_total = None
@@ -753,6 +778,9 @@ def get_users_usage(
     return {"usages": usages}
 
 
+# endregion
+
+
 @router.put("/user/{username}/set-owner", response_model=UserResponse)
 def set_owner(
     admin_username: str,
@@ -771,6 +799,11 @@ def set_owner(
     logger.info(f'{user.username}"owner successfully set to{admin.username}')
 
     return user
+
+
+# endregion
+
+# region Admin cleanup utilities
 
 
 @router.delete("/users/expired", response_model=List[str])
