@@ -137,6 +137,28 @@ jobs:
               fi
             done <<< "$COMMITS_RAW"
 
+            # --- Extract GHCR image for Build-dev from logs and normalize owner ---
+            IMAGE_REF_ESC=""
+            if [[ "$WF_NAME" == "Build-dev" ]]; then
+              LOGS_URL="${{ github.event.workflow_run.logs_url }}"
+              curl -sL \
+                -H "Authorization: token $GITHUB_TOKEN" \
+                -o logs.zip \
+                "$LOGS_URL" || true
+
+              if [[ -s "logs.zip" ]]; then
+                RAW_LINE=$(unzip -p logs.zip 2>/dev/null | grep -E 'ghcr\.io/.*/rebecca:dev@sha256:' | tail -n 1 || true)
+                if [[ -n "$RAW_LINE" ]]; then
+                  IMG_RAW=$(echo "$RAW_LINE" | grep -oE 'ghcr\.io[^ ]*rebecca:dev@sha256:[0-9a-f]+' || true)
+                  if [[ -n "$IMG_RAW" ]]; then
+                    DIGEST=$(echo "$IMG_RAW" | sed 's/.*rebecca:dev@//')
+                    IMAGE_REF="ghcr.io/rebeccapanel/rebecca:dev@$DIGEST"
+                    IMAGE_REF_ESC=$(html_escape "$IMAGE_REF")
+                  fi
+                fi
+              fi
+            fi
+
             SHORT_SHA_ESC=$(html_escape "$SHORT_SHA")
 
             MESSAGE="$HEADER%0A%0A👤 Triggered by: $ACTOR%0A🌿 Branch: <code>$BRANCH</code>%0A🔖 Commit: <code>$SHORT_SHA_ESC</code>%0A📦 Status: <code>$LABEL</code>%0A🔗 <a href=\"$ESC_RUN_URL\">Open main workflow run</a>"
@@ -151,12 +173,16 @@ jobs:
               MESSAGE="$MESSAGE%0A%0A<b>Recent commits (top 10):</b>%0A$COMMITS_BLOCK"
             fi
 
+            if [[ -n "$IMAGE_REF_ESC" ]]; then
+              MESSAGE="$MESSAGE%0A%0A<b>📦 Deployment image (GHCR)</b>%0A🔁 Use this immutable tag to deploy or roll back to this exact version:%0A<code>$IMAGE_REF_ESC</code>"
+            fi
+
           elif [[ "${{ github.event_name }}" == "release" ]]; then
             # ===================== RELEASE EVENT =====================
             ACTOR=$(html_escape "${{ github.actor }}")
             REL_TAG=$(html_escape "${{ github.event.release.tag_name }}")
             REL_NAME_RAW="${{ github.event.release.name }}"
-            REL_NAME=$(html_escape "$REL_NAME_RAW")
+            REL_NAME=$(html_escape "$REL_NAME_RAW$")
             REL_URL="${{ github.event.release.html_url }}"
             ACTION="${{ github.event.action }}"
 
