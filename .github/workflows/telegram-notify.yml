@@ -15,9 +15,7 @@ on:
 
   # Also send notifications for Release events
   release:
-    types:
-      - published
-      - prereleased
+    types: [published, prereleased]
 
 jobs:
   notify-telegram:
@@ -58,24 +56,13 @@ jobs:
               *) ICON="⏳"; LABEL="$WF_CONCLUSION";;
             esac
 
-            # Different text for dev vs release build
             if [[ "$WF_NAME" == "Build-dev" ]]; then
-              HEADER="$ICON <b>dev build pipeline completed</b>"
-              CONTEXT_LINE="🌿 Branch: <code>$BRANCH</code>"
-              PIPELINE_KIND="dev build"
+              HEADER="$ICON <b>dev build pipeline completed for <code>$BRANCH</code></b>"
             else
-              # For release builds, head_branch is usually the tag (e.g. v1.2.3)
-              TAG_ESC=$(html_escape "$BRANCH_RAW")
               HEADER="$ICON <b>release build pipeline completed</b>"
-              CONTEXT_LINE="🏷 Tag: <code>$TAG_ESC</code>"
-              PIPELINE_KIND="release build"
             fi
 
-            SHORT_SHA_ESC=$(html_escape "$SHORT_SHA")
-
-            MESSAGE="$HEADER%0A%0A$CONTEXT_LINE%0A👤 Triggered by: $ACTOR%0A🔖 Commit: <code>$SHORT_SHA_ESC</code>%0A📦 Status: <code>$LABEL</code>%0A🔗 <a href=\"$ESC_RUN_URL\">Open $PIPELINE_KIND run</a>"
-
-            # --- Fetch status of all relevant workflows for this commit ---
+            # --- Get all relevant workflows for this commit (Build, Build-dev, CodeQL, Ruff, DB tests, PR build) ---
             RUNS_JSON=$(curl -s \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
@@ -109,19 +96,59 @@ jobs:
               ESC_URL=$(html_escape "$URL")
 
               case "$CONCLUSION" in
-                success) STATUS_ICON="✅"; STATUS_TEXT="success";;
-                failure) STATUS_ICON="❌"; STATUS_TEXT="failed";;
-                cancelled) STATUS_ICON="⏹"; STATUS_TEXT="cancelled";;
-                in_progress) STATUS_ICON="⏳"; STATUS_TEXT="in progress";;
-                *) STATUS_ICON="❔"; STATUS_TEXT="$CONCLUSION";;
+                success) STATUS_ICON="✅"; STATUS="success";;
+                failure) STATUS_ICON="❌"; STATUS="failed";;
+                cancelled) STATUS_ICON="⏹"; STATUS="cancelled";;
+                in_progress) STATUS_ICON="⏳"; STATUS="in progress";;
+                *) STATUS_ICON="❔"; STATUS="$CONCLUSION";;
               esac
 
-              WORKFLOW_LINES+="$STATUS_ICON <a href=\"$ESC_URL\">$ESC_NAME</a>: <code>$STATUS_TEXT</code>"$'\n'
+              WORKFLOW_LINES+="$STATUS_ICON <a href=\"$ESC_URL\">$ESC_NAME</a>: <code>$STATUS</code>"$'\n'
             done <<< "$BASE64_ROWS"
+
+            # --- Get recent commits for this SHA (top 10) ---
+            COMMITS_JSON=$(curl -s \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/commits?sha=$SHA&per_page=10")
+
+            COMMITS_RAW=$(echo "$COMMITS_JSON" | jq -r '
+              .[] | "- " +
+              (.commit.message
+                | gsub("\r"; " ")
+                | gsub("\n"; " ")
+                | gsub("\""; "\\\"")
+              )
+              + " (" + (.sha[0:7]) + ")"
+            ')
+
+            ESCAPED_COMMITS=""
+            while IFS= read -r line; do
+              if [[ -n "$line" ]]; then
+                if [[ "$line" =~ \(([a-f0-9]{7})\)$ ]]; then
+                  HASH="${BASH_REMATCH[1]}"
+                  PREFIX="${line% (*}"
+                  ESC_PREFIX=$(html_escape "$PREFIX")
+                  ESC_HASH=$(html_escape "$HASH")
+                  ESCAPED_COMMITS+="$ESC_PREFIX (<code>$ESC_HASH</code>)"$'\n'
+                else
+                  ESCAPED_COMMITS+=$(html_escape "$line")$'\n'
+                fi
+              fi
+            done <<< "$COMMITS_RAW"
+
+            SHORT_SHA_ESC=$(html_escape "$SHORT_SHA")
+
+            MESSAGE="$HEADER%0A%0A👤 Triggered by: $ACTOR%0A🌿 Branch: <code>$BRANCH</code>%0A🔖 Commit: <code>$SHORT_SHA_ESC</code>%0A📦 Status: <code>$LABEL</code>%0A🔗 <a href=\"$ESC_RUN_URL\">Open main workflow run</a>"
 
             if [[ -n "$WORKFLOW_LINES" ]]; then
               WF_BLOCK=$(printf "%s" "$WORKFLOW_LINES" | sed 's/$/%0A/g')
               MESSAGE="$MESSAGE%0A%0A<b>Workflows for this commit:</b>%0A$WF_BLOCK"
+            fi
+
+            if [[ -n "$ESCAPED_COMMITS" ]]; then
+              COMMITS_BLOCK=$(printf "%s" "$ESCAPED_COMMITS" | sed 's/$/%0A/g')
+              MESSAGE="$MESSAGE%0A%0A<b>Recent commits (top 10):</b>%0A$COMMITS_BLOCK"
             fi
 
           elif [[ "${{ github.event_name }}" == "release" ]]; then
